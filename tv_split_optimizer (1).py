@@ -120,10 +120,14 @@ if uploaded_file:
         buying_audiences[sh] = ba
     
     st.subheader("📊 Налаштування відхилень по каналах")
+    # Цей список реалізує ваше правило щодо "Топ-каналів"
     channels_20_percent = ['Новий канал', 'ICTV2', 'СТБ', '1+1 Україна', 'TET', '2+2', 'НТН']
     deviation_df = df[['Канал']].copy()
+    
+    # Автоматичне встановлення відхилень +/-20% для "Топ-каналів"
     deviation_df['Мінімальне відхилення'] = deviation_df['Канал'].apply(lambda x: 20.0 if x in channels_20_percent else 30.0)
     deviation_df['Максимальне відхилення'] = deviation_df['Канал'].apply(lambda x: 20.0 if x in channels_20_percent else 30.0)
+    
     edited_deviation_df = st.data_editor(deviation_df, num_rows="dynamic")
     
     if st.button("🚀 Запустити оптимізацію"):
@@ -156,4 +160,4 @@ if uploaded_file:
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             all_results.to_excel(writer, sheet_name='Оптимальний спліт', index=False)
         st.download_button("📥 Завантажити результати Excel", data=output.getvalue(),
-                           file_name="результати_оптимізації.xlsx")
+                             file_name="результати_оптимізації.xlsx")
