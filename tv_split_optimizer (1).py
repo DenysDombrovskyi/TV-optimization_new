@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 # --- Функції ---
 
 def validate_excel_file(df_standard):
-    required_cols_standard = ['Канал', 'СХ', 'Бюджет (%)']
+    required_cols_standard = ['Канал', 'СХ', 'Ціна', 'Affinity']
     for col in required_cols_standard:
         if col not in df_standard.columns:
             st.error(f"❌ В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
@@ -15,20 +15,13 @@ def validate_excel_file(df_standard):
     return True
 
 def apply_budget_limits(df, min_share, max_share):
-    """
-    Коригує бюджети в межах допустимих відхилень.
-    Використовує спліт з Excel як базу.
-    """
     df = df.copy()
-    df['Оптимальний бюджет'] = df['Бюджет (%)']
     for idx, row in df.iterrows():
         channel = row['Канал']
-        base = row['Бюджет (%)']
+        base = row['Бюджет_оптимальний']
         min_val = min_share.get(channel, 0)
         max_val = max_share.get(channel, 100)
-        # обмежуємо бюджет
         df.at[idx, 'Оптимальний бюджет'] = np.clip(base, min_val, max_val)
-    # нормалізація так, щоб сума 100%
     df['Оптимальний бюджет'] = df['Оптимальний бюджет'] / df['Оптимальний бюджет'].sum() * 100
     return df
 
@@ -62,8 +55,19 @@ if uploaded_file:
     all_sh = df['СХ'].unique()
 
     st.header("🔧 Налаштування оптимізації")
-    st.subheader("📊 Групування каналів та обмеження часток")
+    st.subheader("🎯 Вибір БА для кожного СХ")
+    buying_audiences = {}
+    for sh in all_sh:
+        # Шукаємо стовпець бюджету для аудиторії
+        budget_cols = [col for col in df.columns if col.startswith(f'Бюджет_{sh}')]
+        default_col = 'Бюджет (%)'
+        if budget_cols:
+            col_name = budget_cols[0]
+        else:
+            col_name = default_col
+        buying_audiences[sh] = col_name
 
+    # Підготовка топ-каналів
     top_channel_groups = {
         'Оушен': ['СТБ', 'Новий канал', 'ICTV2'],
         'Sirius': ['1+1 Україна', 'ТЕТ', '2+2'],
@@ -71,6 +75,7 @@ if uploaded_file:
     }
     all_top_channels = [ch for sublist in top_channel_groups.values() for ch in sublist]
 
+    # Мін/макс частки
     min_share = {}
     max_share = {}
     for channel in df['Канал'].unique():
@@ -82,6 +87,12 @@ if uploaded_file:
             max_val = 130.0
         min_share[channel] = min_val
         max_share[channel] = max_val
+
+    # Створюємо колонку для базового бюджету
+    df['Бюджет_оптимальний'] = df.apply(
+        lambda row: row.get(buying_audiences.get(row['СХ'], 'Бюджет (%)'), row['Бюджет (%)']),
+        axis=1
+    )
 
     if st.button("🚀 Запустити оптимізацію"):
         all_results = pd.DataFrame()
@@ -100,7 +111,7 @@ if uploaded_file:
             st.markdown(f"##### СХ: {sh}")
             sh_df = all_results[all_results['СХ']==sh].copy()
             st.dataframe(
-                sh_df[['Канал', 'Бюджет (%)', 'Оптимальний бюджет', 'GRP', 'TRP', 'Сумарна частка бюджету топ-каналів (%)']]
+                sh_df[['Канал', 'Бюджет_оптимальний', 'Оптимальний бюджет', 'GRP', 'TRP', 'Сумарна частка бюджету топ-каналів (%)']]
                 .style.apply(highlight_top_channels, axis=1, top_channels=all_top_channels)
             )
 
