@@ -51,8 +51,12 @@ def heuristic_split_percent(group_df):
     return pd.Series(shares, index=group_df.index)
 
 def run_heuristic_optimization(df, buying_audiences, deviation_df):
+    # Вставляємо обрані ціни
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
+    
+    # Об'єднання з deviation_df для мінімальних/максимальних відхилень
+    df = df.merge(deviation_df, on='Канал', how='left').fillna(0)
     
     all_results = pd.DataFrame()
     
