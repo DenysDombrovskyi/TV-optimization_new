@@ -57,7 +57,7 @@ def heuristic_split_within_group(group_df, total_group_budget):
     
     return group_df
 
-def run_multi_group_optimization(df, buying_audiences, top_channel_groups):
+def run_multi_group_optimization(df, buying_audiences, top_channel_groups, fixed_channels):
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['Affinity'] = df.apply(lambda row: row.get(f'Affinity_{buying_audiences.get(row["СХ"], "")}', 1.0), axis=1)
@@ -66,23 +66,37 @@ def run_multi_group_optimization(df, buying_audiences, top_channel_groups):
 
     for sh, group_df in df.groupby('СХ'):
         optimized_group = pd.DataFrame()
+        
+        # 1. Виділяємо канали з фіксованою часткою
+        fixed_channels_df = group_df[group_df['Канал'].isin(fixed_channels)].copy()
+        
+        # 2. Визначаємо початковий бюджет
         total_sx_budget = (group_df['Ціна'] * group_df['TRP']).sum()
-
+        
+        # 3. Обробляємо канали з фіксованою часткою
+        if not fixed_channels_df.empty:
+            fixed_channels_df['Оптимальний бюджет'] = fixed_channels_df['Ціна'] * fixed_channels_df['TRP']
+            optimized_group = pd.concat([optimized_group, fixed_channels_df])
+            remaining_df = group_df[~group_df['Канал'].isin(fixed_channels)].copy()
+        else:
+            remaining_df = group_df.copy()
+            
+        # 4. Обробляємо інші Топ-канали
         all_top_channels = [channel for sublist in top_channel_groups.values() for channel in sublist]
-        remaining_df = group_df.copy()
+        remaining_df_for_opt = remaining_df.copy()
 
         for group_name, channels_list in top_channel_groups.items():
-            df_group = group_df[group_df['Канал'].isin(channels_list)].copy()
+            df_group = remaining_df[remaining_df['Канал'].isin(channels_list)].copy()
             if not df_group.empty:
-                # Фіксуємо сумарний бюджет для групи
                 total_group_budget = (df_group['Ціна'] * df_group['TRP']).sum()
                 results_group = heuristic_split_within_group(df_group, total_group_budget)
                 optimized_group = pd.concat([optimized_group, results_group])
-                remaining_df = remaining_df[~remaining_df['Канал'].isin(channels_list)]
+                remaining_df_for_opt = remaining_df_for_opt[~remaining_df_for_opt['Канал'].isin(channels_list)]
 
-        if not remaining_df.empty:
-            total_remaining_budget = (remaining_df['Ціна'] * remaining_df['TRP']).sum()
-            results_remaining = heuristic_split_within_group(remaining_df, total_remaining_budget)
+        # 5. Обробляємо решту каналів
+        if not remaining_df_for_opt.empty:
+            total_remaining_budget = (remaining_df_for_opt['Ціна'] * remaining_df_for_opt['TRP']).sum()
+            results_remaining = heuristic_split_within_group(remaining_df_for_opt, total_remaining_budget)
             optimized_group = pd.concat([optimized_group, results_remaining])
         
         # Перераховуємо відсотки, щоб сума була 100%
@@ -101,10 +115,12 @@ def highlight_cost(val, costs):
     else:
         return ''
 
-def highlight_top_channels(row, top_channels):
-    """Виділяє Топ-канали жирним шрифтом."""
-    if row['Канал'] in top_channels:
-        return ['font-weight: bold'] * len(row)
+def highlight_top_channels(row, top_channels, fixed_channels):
+    """Виділяє Топ-канали та канали з фіксованою часткою."""
+    if row['Канал'] in fixed_channels:
+        return ['font-weight: bold; background-color: #add8e6'] * len(row) # Light Blue
+    elif row['Канал'] in top_channels:
+        return ['font-weight: bold; background-color: #f0f0f0'] * len(row) # Light Gray
     return [''] * len(row)
 
 # --- Streamlit інтерфейс ---
@@ -143,10 +159,12 @@ if uploaded_file:
         'Space': ['НТН']
     }
     
+    # Визначаємо канали з фіксованою часткою
+    fixed_channels = ['Інтер']
+    
     if st.button("🚀 Запустити оптимізацію"):
-        all_results = run_multi_group_optimization(df.copy(), buying_audiences, top_channel_groups)
+        all_results = run_multi_group_optimization(df.copy(), buying_audiences, top_channel_groups, fixed_channels)
         
-        # Отримуємо єдиний список Топ-каналів для виділення
         all_top_channels = [channel for sublist in top_channel_groups.values() for channel in sublist]
         
         st.subheader("📊 Результати оптимізації по СХ")
@@ -155,24 +173,21 @@ if uploaded_file:
             sh_df = all_results[all_results['СХ']==sh].copy()
             sh_df_sorted = sh_df.sort_values(by='Оптимальна частка (%)', ascending=False)
             
-            # Додаємо колонку з початковим бюджетом для порівняння
             sh_df_sorted['Початковий бюджет'] = sh_df_sorted['TRP'] * sh_df_sorted['Ціна']
-            
-            # Розраховуємо Ціну за ТРП цільовий для відображення
             sh_df_sorted['Ціна_ТРП_цільовий'] = np.divide(sh_df_sorted['Ціна'], sh_df_sorted['TRP'],
                                                           out=np.full_like(sh_df_sorted['TRP'].to_numpy(), np.inf, dtype=float),
                                                           where=sh_df_sorted['TRP']!=0) * sh_df_sorted['Affinity']
             
-            # Виділяємо Топ-канали
             st.dataframe(
                 sh_df_sorted[['Канал', 'Початковий бюджет', 'Оптимальний бюджет', 'Ціна_ТРП_цільовий', 'Оптимальна частка (%)']]
-                .style.apply(highlight_top_channels, axis=1, top_channels=all_top_channels)
+                .style.apply(highlight_top_channels, axis=1, top_channels=all_top_channels, fixed_channels=fixed_channels)
                 .applymap(lambda v: highlight_cost(v, sh_df_sorted['Ціна_ТРП_цільовий']), subset=['Ціна_ТРП_цільовий'])
             )
 
             st.markdown(f"**Сумарний початковий бюджет:** `{sh_df_sorted['Початковий бюджет'].sum():,.2f}`")
             st.markdown(f"**Сумарний оптимальний бюджет:** `{sh_df_sorted['Оптимальний бюджет'].sum():,.2f}`")
             st.markdown(f"**Сумарний бюджет Топ-каналів:** `{sh_df_sorted[sh_df_sorted['Канал'].isin(all_top_channels)]['Оптимальний бюджет'].sum():,.2f}`")
+            st.markdown(f"**Сумарний бюджет каналів з фіксованою часткою:** `{sh_df_sorted[sh_df_sorted['Канал'].isin(fixed_channels)]['Оптимальний бюджет'].sum():,.2f}`")
         
         st.subheader("📊 Графіки сплітів")
         for sh in all_results['СХ'].unique():
