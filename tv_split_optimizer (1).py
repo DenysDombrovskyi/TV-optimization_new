@@ -58,40 +58,42 @@ def heuristic_split_within_group(group_df, total_group_budget):
     return group_df
 
 
-def run_two_stage_optimization(df, buying_audiences, channels_20_percent):
+def run_multi_group_optimization(df, buying_audiences, top_channel_groups):
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     
     all_results = pd.DataFrame()
 
     for sh, group_df in df.groupby('СХ'):
-        # 1. Визначаємо групи каналів
-        top_channels_mask = group_df['Канал'].isin(channels_20_percent)
-        df_top = group_df[top_channels_mask].copy()
-        df_other = group_df[~top_channels_mask].copy()
-        
-        # 2. Розраховуємо загальний бюджет для кожної групи
-        total_top_budget = (df_top['Ціна'] * df_top['TRP']).sum()
-        total_other_budget = (df_other['Ціна'] * df_other['TRP']).sum()
+        optimized_group = pd.DataFrame()
         total_sx_budget = (group_df['Ціна'] * group_df['TRP']).sum()
 
-        st.info(f"СХ: {sh} | Сумарний бюджет Топ-каналів: {total_top_budget:.2f} | Сумарний бюджет інших каналів: {total_other_budget:.2f}")
+        # 1. Оптимізуємо кожну групу "Топ-каналів" окремо
+        all_top_channels = [channel for sublist in top_channel_groups.values() for channel in sublist]
+        remaining_df = group_df.copy()
 
-        # 3. Розподіляємо бюджет всередині кожної групи
-        results_top = heuristic_split_within_group(df_top, total_top_budget)
-        results_other = heuristic_split_within_group(df_other, total_other_budget)
+        for group_name, channels_list in top_channel_groups.items():
+            df_group = group_df[group_df['Канал'].isin(channels_list)].copy()
+            if not df_group.empty:
+                total_group_budget = (df_group['Ціна'] * df_group['TRP']).sum()
+                results_group = heuristic_split_within_group(df_group, total_group_budget)
+                optimized_group = pd.concat([optimized_group, results_group])
+                # Видаляємо вже оптимізовані канали з решти DataFrame
+                remaining_df = remaining_df[~remaining_df['Канал'].isin(channels_list)]
 
-        # 4. Об'єднуємо результати
-        optimized_group = pd.concat([results_top, results_other])
-        
-        # Перераховуємо відсотки, щоб сума була 100%
+        # 2. Оптимізуємо решту каналів, які не є "топовими"
+        if not remaining_df.empty:
+            total_remaining_budget = (remaining_df['Ціна'] * remaining_df['TRP']).sum()
+            results_remaining = heuristic_split_within_group(remaining_df, total_remaining_budget)
+            optimized_group = pd.concat([optimized_group, results_remaining])
+
+        # 3. Перераховуємо відсотки, щоб сума була 100%
         optimized_group['Оптимальна частка (%)'] = (optimized_group['Оптимальний бюджет'] / total_sx_budget) * 100
 
         all_results = pd.concat([all_results, optimized_group])
 
-    # Final sanity check and normalization
+    # Фінальна перевірка та нормалізація
     all_results['Оптимальна частка (%)'] = all_results.groupby('СХ')['Оптимальна частка (%)'].transform(lambda x: x / x.sum() * 100)
-    all_results['Оптимальний бюджет'] = all_results.groupby('СХ')['Оптимальний бюджет'].transform(lambda x: x / x.sum() * (x.sum()))
     
     return all_results.sort_values(['СХ', 'Канал'])
 
@@ -130,14 +132,18 @@ if uploaded_file:
         ba = st.selectbox(f"СХ: {sh}", all_ba, key=sh)
         buying_audiences[sh] = ba
     
-    st.subheader("📊 Налаштування відхилень по каналах")
-    st.markdown("Попередній механізм відхилень видалено. **Тепер оптимізація працює за правилом: "
-                "сумарний бюджет для Топ-каналів фіксується і розподіляється всередині групи.**")
+    st.subheader("📊 Групування каналів")
+    st.markdown("**Сумарний бюджет зберігатиметься для кожної групи окремо.**")
     
-    channels_20_percent = ['Новий канал', 'ICTV2', 'СТБ', '1+1 Україна', 'TET', '2+2', 'НТН']
+    # Визначення груп "Топ-каналів" на основі ваших даних
+    top_channel_groups = {
+        'Оушен': ['СТБ', 'Новий канал', 'ICTV2'],
+        'Sirius': ['1+1 Україна', 'ТЕТ', '2+2'],
+        'Space': ['НТН']
+    }
     
     if st.button("🚀 Запустити оптимізацію"):
-        all_results = run_two_stage_optimization(df.copy(), buying_audiences, channels_20_percent)
+        all_results = run_multi_group_optimization(df.copy(), buying_audiences, top_channel_groups)
         
         st.subheader("📊 Результати оптимізації по СХ")
         for sh in all_results['СХ'].unique():
