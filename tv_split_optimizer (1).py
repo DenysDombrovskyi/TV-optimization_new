@@ -13,28 +13,10 @@ uploaded_file = st.file_uploader("Завантажте Excel-файл з дан�
 if uploaded_file:
     try:
         standard_df = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=1, engine="openpyxl")
-        aff_df_raw = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", engine="openpyxl")
-
-        header_row_index = None
-        for i in range(len(aff_df_raw)):
-            row_values = aff_df_raw.iloc[i].astype(str).str.strip().str.lower().tolist()
-            if 'канал' in row_values and 'aff' in row_values:
-                header_row_index = i
-                break
-
-        if header_row_index is not None:
-            aff_df = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", header=header_row_index, engine="openpyxl")
-            aff_df.columns = aff_df.columns.str.strip().str.lower()
-            if 'канал' in aff_df.columns and 'aff' in aff_df.columns:
-                aff_df = aff_df[['канал', 'aff']].copy()
-                aff_df.columns = ['Канал', 'Aff']
-                st.success("✅ Дані успішно завантажено!")
-            else:
-                st.error("❌ Не знайдено колонки 'Канал' та 'Aff' після нормалізації назв.")
-                st.stop()
-        else:
-            st.error("❌ Не вдалося знайти рядок з колонками 'Канал' та 'Aff'. Перевірте структуру листа.")
-            st.stop()
+        aff_df = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", skiprows=7, engine="openpyxl")
+        aff_df = aff_df.iloc[:, [0, 1]].copy()
+        aff_df.columns = ['Канал', 'Aff']
+        st.success("✅ Дані успішно завантажено!")
 
         all_data = pd.merge(standard_df, aff_df, on='Канал')
         all_sh = all_data['СХ'].unique()
@@ -51,14 +33,9 @@ if uploaded_file:
             ba = st.selectbox(f"СХ: {sh}", all_ba, key=sh)
             buying_audiences[sh] = ba
 
-        missing_ba = [sh for sh in all_sh if buying_audiences.get(sh) is None]
-        if missing_ba:
-            st.error(f"❌ Не обрано БА для наступних СХ: {', '.join(missing_ba)}")
-            st.stop()
-
         if st.button("🚀 Запустити оптимізацію"):
-            all_data['Ціна'] = all_data.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"])}', 0), axis=1)
-            all_data['TRP'] = all_data.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"])}', 0), axis=1)
+            all_data['Ціна'] = all_data.apply(lambda row: row[f'Ціна_{buying_audiences[row["СХ"]]}'], axis=1)
+            all_data['TRP'] = all_data.apply(lambda row: row[f'TRP_{buying_audiences[row["СХ"]]}'], axis=1)
             all_results = pd.DataFrame()
 
             if mode == 'per_sh':
