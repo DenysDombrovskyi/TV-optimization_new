@@ -310,4 +310,5 @@ if uploaded_file:
                                           columns=excel_df.columns)
                 excel_df = pd.concat([excel_df, total_row], ignore_index=True)
 
-                excel_df.to_excel(output, index=False, engine='
+                excel_df.to_excel(output, index=False, engine='openpyxl')
+                st.download_button("📥 Завантажити результати Excel", data=output.getvalue(), file_name="результати_оптимізації.xlsx")
