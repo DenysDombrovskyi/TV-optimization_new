@@ -16,12 +16,12 @@ def validate_excel_file(df_standard, df_aff):
 
     for col in required_cols_standard:
         if col not in df_standard.columns:
-            st.error(f"❌ Помилка: В аркуші 'Сп-во' відсутній обов'язковий стовпець '{col}'.")
+            st.error(f"❌ Помилка: В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
             return False
             
     for col in required_cols_aff:
         if col not in df_aff.columns:
-            st.error(f"❌ Помилка: В аркуші 'Оптимізація спліта (викл)' відсутній обов'язковий стовпець '{col}'.")
+            st.error(f"❌ Помилка: В аркуші 'Оптимізація спліта (викл)' відсутній обов'язковий стовпчик '{col}'.")
             return False
     
     return True
@@ -34,17 +34,14 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
     # Додаємо стовпці з цінами та TRP для обраної БА
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
+    df['Стандартний Aff'] = df['Aff']
+    df['Стандартний TRP'] = df['TRP']
     
     # Об'єднуємо дані з таблиці відхилень
     df = df.merge(deviation_df, on='Канал', how='left').fillna(0)
     
     all_results = pd.DataFrame()
     
-    # Визначаємо загальний TRP для нормалізації
-    df['Стандартний TRP'] = df['TRP']
-    total_standard_trp = df['Стандартний TRP'].sum()
-    df['Стандартна доля TRP'] = (df['Стандартний TRP'] / total_standard_trp)
-
     if mode == 'per_sh':
         with st.spinner('Проводимо оптимізацію за кожним СХ...'):
             for sales_house, group_df in df.groupby('СХ'):
@@ -59,9 +56,8 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
                 group_df['Нижня межа TRP'] = group_df['Стандартна доля TRP'] * (1 - group_df['Мінімальне відхилення'] / 100)
                 group_df['Верхня межа TRP'] = group_df['Стандартна доля TRP'] * (1 + group_df['Максимальне відхилення'] / 100)
                 
-                # Завдання для linprog: максимізувати загальний TRP
+                # Завдання для linprog
                 c = -group_df[goal].values
-                # Обмеження TRP для кожного каналу
                 A_upper = pd.get_dummies(group_df['Канал']).mul(group_df['TRP'], axis=0).values
                 b_upper = group_df['Верхня межа TRP'].values * group_standard_trp
                 b_lower = group_df['Нижня межа TRP'].values * group_standard_trp
@@ -81,6 +77,7 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
                     slots = result.x.round(0).astype(int)
                     group_df['Оптимальні слоти'] = slots
                     group_df['Оптимальний TRP'] = slots * group_df['TRP']
+                    group_df['Оптимальний Aff'] = slots * group_df['Aff']
                     group_df['Оптимальний TRP (%)'] = (group_df['Оптимальний TRP'] / group_df['Оптимальний TRP'].sum()) * 100
                     all_results = pd.concat([all_results, group_df])
                 else:
@@ -88,6 +85,9 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
                     
     else:  # mode == 'total'
         with st.spinner('Проводимо загальну оптимізацію...'):
+            total_standard_trp = df['Стандартний TRP'].sum()
+            df['Стандартна доля TRP'] = df['Стандартний TRP'] / total_standard_trp
+            
             # Використовуємо задані користувачем відхилення
             df['Нижня межа TRP'] = df['Стандартна доля TRP'] * (1 - df['Мінімальне відхилення'] / 100)
             df['Верхня межа TRP'] = df['Стандартна доля TRP'] * (1 + df['Максимальне відхилення'] / 100)
@@ -105,13 +105,13 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
             b = list(b_upper) + list(b_lower)
 
             bounds = [(1, None) for _ in range(len(df))]
-
             result = linprog(c, A_ub=A, b_ub=b, bounds=bounds)
             
             if result.success:
                 slots = result.x.round(0).astype(int)
                 df['Оптимальні слоти'] = slots
                 df['Оптимальний TRP'] = slots * df['TRP']
+                df['Оптимальний Aff'] = slots * df['Aff']
                 df['Оптимальний TRP (%)'] = (df['Оптимальний TRP'] / df['Оптимальний TRP'].sum()) * 100
                 all_results = df
             else:
@@ -125,6 +125,9 @@ st.set_page_config(page_title="Оптимізація ТВ спліта", layout
 st.title("📺 Оптимізація ТВ спліта | Dentsu X")
 
 uploaded_file = st.file_uploader("Завантажте Excel-файл з даними", type=["xlsx"])
+
+# Умовний бюджет для порівняльних розрахунків
+total_budget_assumption = 1_000_000
 
 if uploaded_file:
     try:
@@ -152,6 +155,7 @@ if uploaded_file:
         all_ba = [col.replace('Ціна_', '') for col in all_data.columns if 'Ціна_' in col]
 
         st.header("🔧 Налаштування оптимізації")
+        st.info(f"Для порівняння фінансових показників програма використовує умовний бюджет **{total_budget_assumption:,} грн**.")
         goal = st.selectbox("Мета оптимізації", ['Aff', 'TRP'])
         mode = st.selectbox("Режим оптимізації", ['total', 'per_sh'])
         
@@ -181,13 +185,58 @@ if uploaded_file:
             all_results = run_optimization(all_data.copy(), goal, mode, buying_audiences, edited_deviation_df)
             
             if not all_results.empty:
-                # Розрахунок підсумкових даних
-                total_trp_opt = (all_results['Оптимальні слоти'] * all_results['TRP']).sum()
+                # Розрахунок бюджетів
+                all_results['Оптимальний бюджет'] = all_results['Оптимальні слоти'] * all_results['Ціна']
+                all_results['Стандартний бюджет'] = all_results['Стандартний TRP'] * all_results['Ціна']
                 
-                st.subheader("📊 Результати оптимізації")
-                st.metric("Загальний TRP (оптимізований)", f"{total_trp_opt:,.2f}")
+                # Розрахунок показників для порівняння, використовуючи умовний бюджет
+                total_budget_opt_raw = all_results['Оптимальний бюджет'].sum()
+                total_budget_std = all_results['Стандартний бюджет'].sum()
+                
+                # Масштабування, щоб загальний бюджет дорівнював умовному
+                if total_budget_opt_raw > 0:
+                    scale_factor = total_budget_assumption / total_budget_opt_raw
+                    total_trp_opt_scaled = all_results['Оптимальний TRP'].sum() * scale_factor
+                    total_aff_opt_scaled = all_results['Оптимальний Aff'].sum() * scale_factor
+                else:
+                    st.error("Не вдалося розрахувати масштабовані дані. Загальний оптимальний бюджет дорівнює 0.")
+                    st.stop()
+                
+                # Розрахунок вартості за рейтинг для загального спліта
+                total_trp_std = all_results['Стандартний TRP'].sum()
+                total_aff_std = all_results['Стандартний Aff'].sum()
+                
+                cpt_opt = total_budget_assumption / total_aff_opt_scaled if total_aff_opt_scaled > 0 else 0
+                cpp_opt = total_budget_assumption / total_trp_opt_scaled if total_trp_opt_scaled > 0 else 0
+                cpt_std = total_budget_std / total_aff_std if total_aff_std > 0 else 0
+                cpp_std = total_budget_std / total_trp_std if total_trp_std > 0 else 0
 
-                st.dataframe(all_results[['Канал', 'СХ', 'Оптимальні слоти', 'Оптимальний TRP', 'Оптимальний TRP (%)']])
+                st.subheader("📊 Результати оптимізації")
+                
+                st.markdown("#### Загальна вартість за рейтинг (на основі умовного бюджету)")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.info("**Стандартний спліт**")
+                    st.metric("Ціна за Aff", f"{cpt_std:,.2f} грн")
+                    st.metric("Ціна за TRP", f"{cpp_std:,.2f} грн")
+                with col2:
+                    st.success("**Оптимізований спліт**")
+                    st.metric("Ціна за Aff", f"{cpt_opt:,.2f} грн")
+                    st.metric("Ціна за TRP", f"{cpp_opt:,.2f} грн")
+
+                st.markdown("---")
+                st.subheader("Деталі оптимізованого спліта (масштабовано)")
+                st.metric("Загальний TRP (масштабовано)", f"{total_trp_opt_scaled:,.2f}")
+                st.metric("Загальний Aff (масштабовано)", f"{total_aff_opt_scaled:,.2f}")
+                
+                # Створення масштабованих колонок для відображення
+                all_results['Оптимальні слоти (масштаб)'] = (all_results['Оптимальні слоти'] * scale_factor).round(0).astype(int)
+                all_results['Оптимальний бюджет (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['Ціна']
+                all_results['Оптимальний TRP (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['TRP']
+                all_results['Оптимальний Aff (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['Aff']
+                all_results['Оптимальний TRP (%)'] = (all_results['Оптимальний TRP (масштаб)'] / all_results['Оптимальний TRP (масштаб)'].sum()) * 100
+                
+                st.dataframe(all_results[['Канал', 'СХ', 'Оптимальні слоти (масштаб)', 'Оптимальний TRP (масштаб)', 'Оптимальний Aff (масштаб)', 'Оптимальний TRP (%)']])
 
                 # Візуалізація результатів
                 fig, axes = plt.subplots(1, 2, figsize=(18, 8))
@@ -195,7 +244,7 @@ if uploaded_file:
                 
                 if 'Стандартний TRP' in all_results.columns:
                     std_share = (all_results['Стандартний TRP'] / all_results['Стандартний TRP'].sum()) * 100
-                    opt_share = (all_results['Оптимальний TRP'] / all_results['Оптимальний TRP'].sum()) * 100
+                    opt_share = (all_results['Оптимальний TRP (масштаб)'] / all_results['Оптимальний TRP (масштаб)'].sum()) * 100
                     x = range(len(labels))
                     width = 0.35
                     axes[0].bar(x, std_share, width, label='Стандартний спліт', color='gray')
@@ -206,7 +255,7 @@ if uploaded_file:
                     axes[0].legend()
                     axes[0].grid(axis='y')
 
-                axes[1].bar(labels, all_results['Оптимальні слоти'], color='skyblue')
+                axes[1].bar(labels, all_results['Оптимальні слоти (масштаб)'], color='skyblue')
                 axes[1].set_title('Кількість слотів')
                 axes[1].set_xticklabels(labels, rotation=45, ha="right")
                 axes[1].grid(axis='y')
