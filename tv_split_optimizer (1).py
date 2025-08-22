@@ -14,75 +14,88 @@ def validate_excel_file(df_standard):
             return False
     return True
 
-def heuristic_split_percent_with_limits(group_df):
+def heuristic_split_within_group(group_df, total_group_budget):
     """
-    Евристичний спліт у відсотках з обмеженням на мін/макс відхилення у відсотках від стандартного спліту.
-    Всі канали залишаються в спліті.
+    Розподіляє фіксований бюджет всередині групи каналів, 
+    оптимізуючи за вартістю TRP.
     """
-    standard_trp = group_df['TRP'].to_numpy()
-    total_trp = standard_trp.sum()
-    standard_share = (standard_trp / total_trp) * 100 if total_trp > 0 else np.zeros_like(standard_trp)
-
-    # Мін/макс частка з урахуванням відсотків
-    min_share = standard_share * (1 - group_df['Мінімальне відхилення'].to_numpy()/100)
-    max_share = standard_share * (1 + group_df['Максимальне відхилення'].to_numpy()/100)
-
-    # Початковий спліт = мінімальні частки
-    shares = min_share.copy()
-    remaining = 100 - shares.sum()
-
-    # Вартість за одиницю TRP
+    if group_df.empty or total_group_budget == 0:
+        group_df['Оптимальна частка (%)'] = 0
+        group_df['Оптимальний бюджет'] = 0
+        return group_df
+    
+    # Розрахунок вартості за TRP
     cost_per_trp = np.divide(group_df['Ціна'].to_numpy(), group_df['TRP'].to_numpy(),
                              out=np.full_like(group_df['TRP'].to_numpy(), np.inf, dtype=float),
                              where=group_df['TRP']!=0)
 
-    # Сортуємо від найдешевшого до дорожчого
+    # Сортування від найдешевшого до найдорожчого
     sorted_idx = np.argsort(cost_per_trp)
+    
+    # Розподіл бюджету
+    shares = np.zeros(len(group_df))
+    remaining_budget = total_group_budget
+    total_trp = 0
 
-    # Розподіл залишку в межах максимуму
-    while remaining > 0:
-        updated = False
-        for idx in sorted_idx:
-            add = min(max_share[idx] - shares[idx], remaining)
-            if add > 0:
-                shares[idx] += add
-                remaining -= add
-                updated = True
-            if remaining <= 0:
-                break
-        if not updated:
-            shares += remaining / len(shares)
-            remaining = 0
+    for idx in sorted_idx:
+        # Евристично додаємо бюджет, пропорційно TRP, починаючи з найдешевших
+        if cost_per_trp[idx] != np.inf:
+            budget_to_add = min(remaining_budget, group_df.iloc[idx]['Ціна'] * group_df.iloc[idx]['TRP'])
+            shares[idx] = budget_to_add
+            remaining_budget -= budget_to_add
+            total_trp += budget_to_add / group_df.iloc[idx]['Ціна']
+        if remaining_budget <= 0:
+            break
 
-    # Перевірка: сума точно 100%
-    shares = shares / shares.sum() * 100
-    return pd.Series(shares, index=group_df.index)
+    # Нормалізація, щоб сума була точно дорівнювала загальному бюджету
+    shares = shares / shares.sum() * total_group_budget if shares.sum() > 0 else shares
 
-def run_heuristic_optimization(df, buying_audiences, deviation_df):
+    group_df['Оптимальний бюджет'] = shares
+    total_campaign_budget = group_df['Ціна'].sum() * group_df['TRP'].sum() # Некоректний розрахунок
+    # Правильний розрахунок повної суми бюджету для СХ
+    total_sx_budget = (group_df['Ціна'] * group_df['TRP']).sum() 
+    
+    group_df['Оптимальна частка (%)'] = (group_df['Оптимальний бюджет'] / total_sx_budget) * 100
+    
+    return group_df
+
+
+def run_two_stage_optimization(df, buying_audiences, channels_20_percent):
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
-
-    df = df.merge(deviation_df, on='Канал', how='left').fillna(0)
+    
     all_results = pd.DataFrame()
 
     for sh, group_df in df.groupby('СХ'):
-        shares = heuristic_split_percent_with_limits(group_df)
-
-        # Жорстка перевірка: всі канали в спліті
-        min_allowed = group_df['TRP'] * 0.01  # мінімальна частка для каналу (1% TRP)
-        shares = np.maximum(shares, min_allowed)
-        shares = shares / shares.sum() * 100  # нормалізація до 100%
+        # 1. Визначаємо групи каналів
+        top_channels_mask = group_df['Канал'].isin(channels_20_percent)
+        df_top = group_df[top_channels_mask].copy()
+        df_other = group_df[~top_channels_mask].copy()
         
-        group_df['Оптимальна частка (%)'] = shares
-        group_df['Оптимальний бюджет'] = shares/100 * (group_df['Ціна']*group_df['TRP']).sum()
-        all_results = pd.concat([all_results, group_df])
+        # 2. Розраховуємо загальний бюджет для кожної групи
+        total_top_budget = (df_top['Ціна'] * df_top['TRP']).sum()
+        total_other_budget = (df_other['Ціна'] * df_other['TRP']).sum()
+        total_sx_budget = (group_df['Ціна'] * group_df['TRP']).sum()
 
-        total_share = group_df['Оптимальна частка (%)'].sum()
-        if not np.isclose(total_share, 100):
-            st.warning(f"⚠️ Сума часток для СХ {sh} не дорівнює 100% ({total_share:.2f}%). Автоматично нормалізовано.")
-            all_results.loc[group_df.index, 'Оптимальна частка (%)'] = shares / shares.sum() * 100
+        st.info(f"СХ: {sh} | Сумарний бюджет Топ-каналів: {total_top_budget:.2f} | Сумарний бюджет інших каналів: {total_other_budget:.2f}")
 
-    return all_results
+        # 3. Розподіляємо бюджет всередині кожної групи
+        results_top = heuristic_split_within_group(df_top, total_top_budget)
+        results_other = heuristic_split_within_group(df_other, total_other_budget)
+
+        # 4. Об'єднуємо результати
+        optimized_group = pd.concat([results_top, results_other])
+        
+        # Перераховуємо відсотки, щоб сума була 100%
+        optimized_group['Оптимальна частка (%)'] = (optimized_group['Оптимальний бюджет'] / total_sx_budget) * 100
+
+        all_results = pd.concat([all_results, optimized_group])
+
+    # Final sanity check and normalization
+    all_results['Оптимальна частка (%)'] = all_results.groupby('СХ')['Оптимальна частка (%)'].transform(lambda x: x / x.sum() * 100)
+    all_results['Оптимальний бюджет'] = all_results.groupby('СХ')['Оптимальний бюджет'].transform(lambda x: x / x.sum() * (x.sum()))
+    
+    return all_results.sort_values(['СХ', 'Канал'])
 
 def highlight_cost(val, costs):
     if val == costs.min():
@@ -120,27 +133,25 @@ if uploaded_file:
         buying_audiences[sh] = ba
     
     st.subheader("📊 Налаштування відхилень по каналах")
-    # Цей список реалізує ваше правило щодо "Топ-каналів"
+    st.markdown("Попередній механізм відхилень видалено. **Тепер оптимізація працює за правилом: "
+                "сумарний бюджет для Топ-каналів фіксується і розподіляється всередині групи.**")
+    
+    # Список Топ-каналів, який ви надавали
     channels_20_percent = ['Новий канал', 'ICTV2', 'СТБ', '1+1 Україна', 'TET', '2+2', 'НТН']
-    deviation_df = df[['Канал']].copy()
-    
-    # Автоматичне встановлення відхилень +/-20% для "Топ-каналів"
-    deviation_df['Мінімальне відхилення'] = deviation_df['Канал'].apply(lambda x: 20.0 if x in channels_20_percent else 30.0)
-    deviation_df['Максимальне відхилення'] = deviation_df['Канал'].apply(lambda x: 20.0 if x in channels_20_percent else 30.0)
-    
-    edited_deviation_df = st.data_editor(deviation_df, num_rows="dynamic")
     
     if st.button("🚀 Запустити оптимізацію"):
-        all_results = run_heuristic_optimization(df.copy(), buying_audiences, edited_deviation_df)
+        all_results = run_two_stage_optimization(df.copy(), buying_audiences, channels_20_percent)
         
         st.subheader("📊 Результати оптимізації по СХ")
         for sh in all_results['СХ'].unique():
             st.markdown(f"##### СХ: {sh}")
             sh_df = all_results[all_results['СХ']==sh].copy()
+            sh_df_sorted = sh_df.sort_values(by='Оптимальна частка (%)', ascending=False)
+            
             st.dataframe(
-                sh_df[['Канал','Ціна','TRP','Оптимальна частка (%)','Оптимальний бюджет']]
+                sh_df_sorted[['Канал','Ціна','TRP','Оптимальна частка (%)','Оптимальний бюджет']]
                 .set_index('Канал')
-                .style.applymap(lambda v: highlight_cost(v, sh_df['Ціна']), subset=['Ціна'])
+                .style.applymap(lambda v: highlight_cost(v, sh_df_sorted['Ціна']), subset=['Ціна'])
             )
         
         st.subheader("📊 Графіки сплітів")
