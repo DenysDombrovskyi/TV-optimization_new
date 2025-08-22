@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 from scipy.optimize import linprog
@@ -16,15 +17,21 @@ if uploaded_file:
 
         header_row_index = None
         for i in range(len(aff_df_raw)):
-            row_values = aff_df_raw.iloc[i].astype(str).tolist()
-            if 'Канал' in row_values and 'Aff' in row_values:
+            row_values = aff_df_raw.iloc[i].astype(str).str.strip().str.lower().tolist()
+            if 'канал' in row_values and 'aff' in row_values:
                 header_row_index = i
                 break
 
         if header_row_index is not None:
             aff_df = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", header=header_row_index, engine="openpyxl")
-            aff_df = aff_df[['Канал', 'Aff']].copy()
-            st.success("✅ Дані успішно завантажено!")
+            aff_df.columns = aff_df.columns.str.strip().str.lower()
+            if 'канал' in aff_df.columns and 'aff' in aff_df.columns:
+                aff_df = aff_df[['канал', 'aff']].copy()
+                aff_df.columns = ['Канал', 'Aff']
+                st.success("✅ Дані успішно завантажено!")
+            else:
+                st.error("❌ Не знайдено колонки 'Канал' та 'Aff' після нормалізації назв.")
+                st.stop()
         else:
             st.error("❌ Не вдалося знайти рядок з колонками 'Канал' та 'Aff'. Перевірте структуру листа.")
             st.stop()
