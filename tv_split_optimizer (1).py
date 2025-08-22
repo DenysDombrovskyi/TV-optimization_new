@@ -5,7 +5,6 @@ import io
 import matplotlib.pyplot as plt
 
 # --- Функції ---
-
 def validate_excel_file(df_standard):
     required_cols_standard = ['Канал', 'СХ', 'Ціна', 'Affinity']
     for col in required_cols_standard:
@@ -27,7 +26,7 @@ def apply_budget_limits(df, min_share, max_share):
 
 def calculate_grp_trp(df):
     df = df.copy()
-    df['GRP'] = df['Оптимальний бюджет'] / df['Ціна']
+    df['GRP'] = df['Оптимальний бюджет'] / df['Ціна_оптимальна']
     df['TRP'] = df['GRP'] * df['Affinity']
     return df
 
@@ -58,14 +57,11 @@ if uploaded_file:
     st.subheader("🎯 Вибір БА для кожного СХ")
     buying_audiences = {}
     for sh in all_sh:
-        # Шукаємо стовпець бюджету для аудиторії
         budget_cols = [col for col in df.columns if col.startswith(f'Бюджет_{sh}')]
-        default_col = 'Бюджет (%)'
-        if budget_cols:
-            col_name = budget_cols[0]
-        else:
-            col_name = default_col
-        buying_audiences[sh] = col_name
+        price_cols = [col for col in df.columns if col.startswith(f'Ціна_{sh}')]
+        budget_col = budget_cols[0] if budget_cols else 'Бюджет (%)'
+        price_col = price_cols[0] if price_cols else 'Ціна'
+        buying_audiences[sh] = {'budget': budget_col, 'price': price_col}
 
     # Підготовка топ-каналів
     top_channel_groups = {
@@ -88,10 +84,12 @@ if uploaded_file:
         min_share[channel] = min_val
         max_share[channel] = max_val
 
-    # Створюємо колонку для базового бюджету
+    # Підготовка базових колонок бюджету і ціни
     df['Бюджет_оптимальний'] = df.apply(
-        lambda row: row.get(buying_audiences.get(row['СХ'], 'Бюджет (%)'), row['Бюджет (%)']),
-        axis=1
+        lambda row: row.get(buying_audiences.get(row['СХ'], {}).get('budget', 'Бюджет (%)')), axis=1
+    )
+    df['Ціна_оптимальна'] = df.apply(
+        lambda row: row.get(buying_audiences.get(row['СХ'], {}).get('price', 'Ціна')), axis=1
     )
 
     if st.button("🚀 Запустити оптимізацію"):
@@ -100,7 +98,6 @@ if uploaded_file:
             df_sh = df[df['СХ']==sh].copy()
             df_sh = apply_budget_limits(df_sh, min_share, max_share)
             df_sh = calculate_grp_trp(df_sh)
-            # Сумарна частка топ-каналів по бюджету
             mask_top = df_sh['Канал'].isin(all_top_channels)
             sum_top_budget = df_sh.loc[mask_top, 'Оптимальний бюджет'].sum()
             df_sh['Сумарна частка бюджету топ-каналів (%)'] = sum_top_budget
@@ -111,7 +108,7 @@ if uploaded_file:
             st.markdown(f"##### СХ: {sh}")
             sh_df = all_results[all_results['СХ']==sh].copy()
             st.dataframe(
-                sh_df[['Канал', 'Бюджет_оптимальний', 'Оптимальний бюджет', 'GRP', 'TRP', 'Сумарна частка бюджету топ-каналів (%)']]
+                sh_df[['Канал', 'Бюджет_оптимальний', 'Оптимальний бюджет', 'Ціна_оптимальна', 'GRP', 'TRP', 'Сумарна частка бюджету топ-каналів (%)']]
                 .style.apply(highlight_top_channels, axis=1, top_channels=all_top_channels)
             )
 
@@ -122,7 +119,7 @@ if uploaded_file:
         for sh in all_results['СХ'].unique():
             sh_df = all_results[all_results['СХ']==sh]
             fig, ax = plt.subplots(figsize=(10,5))
-            colors = ['lightgreen' if c==sh_df['Ціна'].min() else 'salmon' if c==sh_df['Ціна'].max() else 'skyblue' for c in sh_df['Ціна']]
+            colors = ['lightgreen' if c==sh_df['Ціна_оптимальна'].min() else 'salmon' if c==sh_df['Ціна_оптимальна'].max() else 'skyblue' for c in sh_df['Ціна_оптимальна']]
             ax.bar(sh_df['Канал'], sh_df['Оптимальний бюджет'], color=colors)
             ax.set_ylabel('Бюджет (%)')
             ax.set_title(f"СХ: {sh} — Оптимальний спліт по каналах")
@@ -130,7 +127,6 @@ if uploaded_file:
             ax.grid(axis='y')
             st.pyplot(fig)
 
-        # Експорт Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             all_results.to_excel(writer, sheet_name='Оптимальний спліт', index=False)
