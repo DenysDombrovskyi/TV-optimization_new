@@ -4,77 +4,62 @@ import numpy as np
 import io
 import matplotlib.pyplot as plt
 
-# --- Функції для валідації та оптимізації ---
+# --- Функції ---
 
 def validate_excel_file(df_standard):
     required_cols_standard = ['Канал', 'СХ']
     for col in required_cols_standard:
         if col not in df_standard.columns:
-            st.error(f"❌ Помилка: В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
+            st.error(f"❌ В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
             return False
     return True
 
-def heuristic_split_cost_based(group_df):
+def heuristic_split_percent(group_df):
     """
-    Евристичний розподіл на основі вартості:
-    1. Всі канали присутні.
-    2. Мінімальні слоти = мінімальне відхилення.
-    3. Розподіл залишку: найдешевший канал отримує максимум, дорожчі — залишок.
+    Евристичний спліт у відсотках:
+    - мінімальна частка = мінімальне відхилення,
+    - залишок розподіляється від найдешевшого каналу до дорожчого,
+    - всі канали присутні, сума = 100%.
     """
-    # Мінімальні та максимальні слоти
-    min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int).to_numpy()
-    max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int).to_numpy()
+    # Мінімальні та максимальні частки
+    min_share = group_df['Мінімальне відхилення'].to_numpy()
+    max_share = group_df['Максимальне відхилення'].to_numpy()
     
-    # Початкові слоти — мінімальні
-    slots = min_slots.copy()
+    # Початковий спліт = мінімальні частки
+    shares = min_share.copy()
+    remaining = 100 - shares.sum()
     
     # Вартість за одиницю TRP
-    cost_per_trp = np.divide(group_df['Ціна'].to_numpy(), group_df['TRP'].to_numpy(), 
-                             out=np.full_like(group_df['TRP'].to_numpy(), np.inf, dtype=float), where=group_df['TRP']!=0)
+    cost_per_trp = np.divide(group_df['Ціна'].to_numpy(), group_df['TRP'].to_numpy(),
+                             out=np.full_like(group_df['TRP'].to_numpy(), np.inf, dtype=float),
+                             where=group_df['TRP']!=0)
     
-    # Залишок слотів
-    total_std = group_df['Стандартні слоти'].sum()
-    allocated = slots.sum()
-    remaining = total_std - allocated
-    
-    # Індекс каналів від найдешевшого до дорожчого
+    # Сортуємо від найдешевшого до дорожчого
     sorted_idx = np.argsort(cost_per_trp)
     
-    # Розподіл залишку по порядку дешевизни
+    # Розподіл залишку
     while remaining > 0:
         for idx in sorted_idx:
-            if slots[idx] < max_slots[idx]:
-                slots[idx] += 1
-                remaining -= 1
-                if remaining <= 0:
-                    break
-        if all(slots >= max_slots):
-            break  # не залишилося місця для розподілу
+            add = min(max_share[idx] - shares[idx], remaining)
+            shares[idx] += add
+            remaining -= add
+            if remaining <= 0:
+                break
+        if all(shares >= max_share):
+            break
     
-    return pd.Series(slots, index=group_df.index)
+    return pd.Series(shares, index=group_df.index)
 
-def run_heuristic_optimization(df, goal, buying_audiences, deviation_df):
+def run_heuristic_optimization(df, buying_audiences, deviation_df):
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
-    
-    total_trp_for_aff = df['TRP'].sum()
-    df['Aff'] = (df['TRP'] / total_trp_for_aff) * 100 if total_trp_for_aff > 0 else 0
-    
-    df['Стандартний Aff'] = df['Aff']
-    df['Стандартний TRP'] = df['TRP']
-    df['Стандартні слоти'] = 1
-    
-    df = df.merge(deviation_df, on='Канал', how='left').fillna(0)
     
     all_results = pd.DataFrame()
     
     for sh, group_df in df.groupby('СХ'):
-        slots = heuristic_split_cost_based(group_df)
-        group_df['Оптимальні слоти'] = slots
-        group_df['Оптимальний TRP'] = slots * group_df['TRP']
-        group_df['Оптимальний Aff'] = slots * group_df['Aff']
-        group_df['Оптимальний бюджет'] = slots * group_df['Ціна']
-        group_df['Стандартний бюджет'] = group_df['Стандартні слоти'] * group_df['Ціна']
+        shares = heuristic_split_percent(group_df)
+        group_df['Оптимальна частка (%)'] = shares
+        group_df['Оптимальний бюджет'] = shares/100 * (group_df['Ціна']*group_df['TRP']).sum()
         all_results = pd.concat([all_results, group_df])
     
     return all_results
@@ -82,7 +67,7 @@ def run_heuristic_optimization(df, goal, buying_audiences, deviation_df):
 # --- Streamlit інтерфейс ---
 
 st.set_page_config(page_title="Оптимізація ТВ спліта", layout="wide")
-st.title("📺 Оптимізація ТВ спліта | Dentsu X")
+st.title("📺 Евристична оптимізація ТВ спліта | Dentsu X")
 
 uploaded_file = st.file_uploader("Завантажте Excel-файл з даними", type=["xlsx"])
 
@@ -100,7 +85,6 @@ if uploaded_file:
     all_ba = [col.replace('Ціна_', '') for col in df.columns if 'Ціна_' in col]
     
     st.header("🔧 Налаштування оптимізації")
-    goal = st.selectbox("Мета оптимізації", ['Aff', 'TRP'])
     
     st.subheader("🎯 Вибір БА для кожного СХ")
     buying_audiences = {}
@@ -116,34 +100,22 @@ if uploaded_file:
     edited_deviation_df = st.data_editor(deviation_df, num_rows="dynamic")
     
     if st.button("🚀 Запустити оптимізацію"):
-        all_results = run_heuristic_optimization(df.copy(), goal, buying_audiences, edited_deviation_df)
+        all_results = run_heuristic_optimization(df.copy(), buying_audiences, edited_deviation_df)
         
         st.subheader("📊 Результати оптимізації по СХ")
         for sh in all_results['СХ'].unique():
             st.markdown(f"##### СХ: {sh}")
             sh_df = all_results[all_results['СХ']==sh].copy()
-            sh_df['Стандартна частка TRP'] = (sh_df['Стандартний TRP']/sh_df['Стандартний TRP'].sum())*100
-            sh_df['Оптимальна частка TRP'] = (sh_df['Оптимальний TRP']/sh_df['Оптимальний TRP'].sum())*100
-            sh_df['Стандартна частка бюджету'] = (sh_df['Стандартний бюджет']/sh_df['Стандартний бюджет'].sum())*100
-            sh_df['Оптимальна частка бюджету'] = (sh_df['Оптимальний бюджет']/sh_df['Оптимальний бюджет'].sum())*100
-            st.dataframe(sh_df[['Канал','Стандартні слоти','Стандартний TRP','Стандартний Aff',
-                                'Оптимальні слоти','Оптимальний TRP','Оптимальний Aff',
-                                'Стандартна частка TRP','Оптимальна частка TRP',
-                                'Стандартна частка бюджету','Оптимальна частка бюджету']].set_index('Канал'))
+            st.dataframe(sh_df[['Канал','Ціна','TRP','Оптимальна частка (%)','Оптимальний бюджет']].set_index('Канал'))
         
         st.subheader("📊 Графіки сплітів")
         for sh in all_results['СХ'].unique():
             sh_df = all_results[all_results['СХ']==sh]
             fig, ax = plt.subplots(figsize=(10,5))
-            width = 0.35
-            x = np.arange(len(sh_df))
-            ax.bar(x - width/2, sh_df['Стандартний бюджет'], width, label='Стандартний', color='gray')
-            ax.bar(x + width/2, sh_df['Оптимальний бюджет'], width, label='Оптимальний', color='skyblue')
-            ax.set_xticks(x)
+            ax.bar(sh_df['Канал'], sh_df['Оптимальна частка (%)'], color='skyblue')
+            ax.set_ylabel('Частка (%)')
+            ax.set_title(f"СХ: {sh} — Оптимальна частка по каналах")
             ax.set_xticklabels(sh_df['Канал'], rotation=45, ha='right')
-            ax.set_ylabel('Бюджет')
-            ax.set_title(f"СХ: {sh} — Розподіл бюджету по каналах")
-            ax.legend()
             ax.grid(axis='y')
             st.pyplot(fig)
         
