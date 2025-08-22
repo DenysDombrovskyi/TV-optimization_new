@@ -16,37 +16,25 @@ def validate_excel_file(df_standard):
 
 def heuristic_split(group_df):
     """
-    Евристичний розподіл слотів для всіх каналів.
-    Всі канали отримують слоти в рамках допустимих відхилень.
+    Евристичний розподіл збереження розміщень:
+    - Стандартні слоти залишаються для всіх каналів.
+    - Неефективні канали зменшуються до мінімальних слотів.
     """
-    total_slots = group_df['Стандартні слоти'].sum()
     min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int).to_numpy()
     max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int).to_numpy()
     
-    # 1. Встановлюємо мінімальні слоти всім каналам
-    slots = np.array(min_slots, dtype=int)
-    remaining_slots = total_slots - slots.sum()
-    
+    slots = group_df['Стандартні слоти'].to_numpy(dtype=int)
     trp_values = group_df['TRP'].to_numpy()
     
-    # 2. Додаємо залишок слотів пропорційно TRP
-    while remaining_slots > 0:
-        candidates = np.where(slots < max_slots)[0]
-        if len(candidates) == 0:
-            break
-        eff_idx = candidates[np.argmax(trp_values[candidates])]
-        slots[eff_idx] += 1
-        remaining_slots -= 1
+    # Визначаємо нижні 25% каналів як неефективні
+    threshold = np.percentile(trp_values, 25)
+    low_eff_idx = np.where(trp_values <= threshold)[0]
     
-    # 3. Якщо перевищили стандартні слоти (через округлення), віднімаємо слоти від найменш ефективних
-    over_slots = slots.sum() - total_slots
-    while over_slots > 0:
-        candidates = np.where(slots > min_slots)[0]
-        if len(candidates) == 0:
-            break
-        eff_idx = candidates[np.argmin(trp_values[candidates])]
-        slots[eff_idx] -= 1
-        over_slots -= 1
+    for idx in low_eff_idx:
+        slots[idx] = min_slots[idx]  # зменшуємо до мінімально допустимого
+    
+    # Переконуємось, що ніде не перевищено максимум
+    slots = np.minimum(slots, max_slots)
     
     return pd.Series(slots, index=group_df.index)
 
