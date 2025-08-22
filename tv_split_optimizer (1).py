@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from scipy.optimize import linprog
@@ -13,14 +12,21 @@ uploaded_file = st.file_uploader("Завантажте Excel-файл з дан�
 if uploaded_file:
     try:
         standard_df = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=1, engine="openpyxl")
-        aff_df_raw = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", skiprows=7, engine="openpyxl")
+        aff_df_raw = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", engine="openpyxl")
 
-        required_columns = ['Канал', 'Aff']
-        if all(col in aff_df_raw.columns for col in required_columns):
-            aff_df = aff_df_raw[required_columns].copy()
+        header_row_index = None
+        for i in range(len(aff_df_raw)):
+            row_values = aff_df_raw.iloc[i].astype(str).tolist()
+            if 'Канал' in row_values and 'Aff' in row_values:
+                header_row_index = i
+                break
+
+        if header_row_index is not None:
+            aff_df = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", header=header_row_index, engine="openpyxl")
+            aff_df = aff_df[['Канал', 'Aff']].copy()
             st.success("✅ Дані успішно завантажено!")
         else:
-            st.error(f"❌ Не знайдено необхідні колонки: {required_columns}. Знайдено: {list(aff_df_raw.columns)}")
+            st.error("❌ Не вдалося знайти рядок з колонками 'Канал' та 'Aff'. Перевірте структуру листа.")
             st.stop()
 
         all_data = pd.merge(standard_df, aff_df, on='Канал')
@@ -36,17 +42,16 @@ if uploaded_file:
         buying_audiences = {}
         for sh in all_sh:
             ba = st.selectbox(f"СХ: {sh}", all_ba, key=sh)
-            buying_audiences[sh] = ba if ba else all_ba[0]
+            buying_audiences[sh] = ba
 
-        # Перевірка, чи всі СХ мають обрану БА
         missing_ba = [sh for sh in all_sh if buying_audiences.get(sh) is None]
         if missing_ba:
             st.error(f"❌ Не обрано БА для наступних СХ: {', '.join(missing_ba)}")
             st.stop()
 
         if st.button("🚀 Запустити оптимізацію"):
-            all_data['Ціна'] = all_data.apply(lambda row: row[f'Ціна_{buying_audiences[row["СХ"]]}'], axis=1)
-            all_data['TRP'] = all_data.apply(lambda row: row[f'TRP_{buying_audiences[row["СХ"]]}'], axis=1)
+            all_data['Ціна'] = all_data.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"])}', 0), axis=1)
+            all_data['TRP'] = all_data.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"])}', 0), axis=1)
             all_results = pd.DataFrame()
 
             if mode == 'per_sh':
@@ -128,4 +133,3 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"❌ Помилка при обробці файлу: {e}")
-
