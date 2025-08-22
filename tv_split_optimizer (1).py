@@ -39,20 +39,12 @@ if uploaded_file:
         df_main = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
         df_affinity = pd.read_excel(uploaded_file, sheet_name="Affinity", engine="openpyxl")
         
-        # Гнучка перевірка назв колонок
-        channel_cols = ['Канал', 'Channel', 'Канали']
-        sx_cols = ['СХ', 'SH', 'СХА']
-
-        channel_col = next((c for c in channel_cols if c in df_main.columns), None)
-        sx_col = next((c for c in sx_cols if c in df_main.columns), None)
-
-        if not channel_col or not sx_col:
-            st.error("❌ В Excel-файлі відсутні необхідні колонки для 'Канал' або 'СХ'.")
-            st.stop()
-
+        st.subheader("📌 Вибір колонок для аналізу")
+        channel_col = st.selectbox("Оберіть колонку з назвами каналів", df_main.columns)
+        sx_col = st.selectbox("Оберіть колонку з назвами СХ", df_main.columns)
         df_main.rename(columns={channel_col: 'Канал', sx_col: 'СХ'}, inplace=True)
 
-        st.success("✅ Дані успішно завантажено!")
+        st.success("✅ Дані успішно завантажено та колонки обрано!")
 
         # З'єднуємо по Каналу
         df = df_main.merge(df_affinity, on='Канал', how='left')
