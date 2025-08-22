@@ -305,4 +305,48 @@ if uploaded_file:
 
                     # Графік 3: Кількість слотів
                     fig_slots, ax_slots = plt.subplots(figsize=(12, 6))
-                    ax_slots.bar(all_results['Канал'], all_results['Оптима
+                    ax_slots.bar(all_results['Канал'], all_results['Оптимальні слоти (масштаб)'], color='skyblue')
+                    
+                    ax_slots.set_title('Кількість слотів в оптимізованому спліті')
+                    ax_slots.set_ylabel('Кількість слотів')
+                    ax_slots.set_xlabel('Канал')
+                    ax_slots.set_xticklabels(all_results['Канал'], rotation=45, ha="right")
+                    ax_slots.grid(axis='y')
+                    plt.tight_layout()
+                    st.pyplot(fig_slots)
+                    
+                # Кнопка для завантаження результатів
+                st.markdown("---")
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    
+                    # 1. Спліт (Стандартний та Оптимізований)
+                    excel_df = all_results[['Канал', 'СХ', 
+                                            'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 'Стандартний бюджет',
+                                            'Оптимальні слоти', 'Оптимальний TRP', 'Оптимальний Aff', 'Оптимальний бюджет']].copy()
+                    
+                    total_row = pd.DataFrame([['Загалом', '-', 
+                                            excel_df['Стандартні слоти'].sum(), 
+                                            excel_df['Стандартний TRP'].sum(), 
+                                            excel_df['Стандартний Aff'].sum(), 
+                                            excel_df['Стандартний бюджет'].sum(),
+                                            excel_df['Оптимальні слоти'].sum(), 
+                                            excel_df['Оптимальний TRP'].sum(), 
+                                            excel_df['Оптимальний Aff'].sum(), 
+                                            excel_df['Оптимальний бюджет'].sum()]],
+                                            columns=excel_df.columns)
+                    excel_df = pd.concat([excel_df, total_row], ignore_index=True)
+                    excel_df.to_excel(writer, sheet_name='Спліт', index=False)
+
+                    # 2. Вартість по СХ
+                    display_df_sh_costs.set_index('СХ').to_excel(writer, sheet_name='Вартість по СХ')
+
+                    # 3. Aff по СХ
+                    display_df_sh_aff = pd.DataFrame({
+                        'СХ': sh_results_opt.index,
+                        'Aff (стандарт)': sh_results_std['Стандартний Aff'],
+                        'Aff (оптимізований)': sh_results_opt['Оптимальний Aff (масштаб)']
+                    })
+                    display_df_sh_aff.set_index('СХ').to_excel(writer, sheet_name='Aff по СХ')
+
+                st.download_button("📥 Завантажити результати Excel", data=output.getvalue(), file_name="результати_оптимізації.xlsx")
