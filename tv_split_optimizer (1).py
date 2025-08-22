@@ -80,7 +80,7 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
                     group_df['Оптимальний Aff'] = slots * group_df['Aff']
                     all_results = pd.concat([all_results, group_df])
                 else:
-                    st.warning(f"Оптимізація для СХ {sales_house} не вдалася: {result.message}")
+                    st.error(f"❌ Оптимізація для СХ {sales_house} не вдалася: {result.message}")
                     
     else:  # mode == 'total'
         with st.spinner('Проводимо загальну оптимізацію...'):
@@ -212,6 +212,10 @@ if uploaded_file:
                 cpp_opt = total_budget_assumption / total_trp_opt_scaled if total_trp_opt_scaled > 0 else 0
                 cpp_std = total_budget_std / total_trp_std if total_trp_std > 0 else 0
                 cpt_std = total_budget_std / total_aff_std if total_aff_std > 0 else 0
+                
+                # Порівняння результатів
+                if (all_results['Оптимальні слоти'] == all_results['Стандартні слоти']).all():
+                    st.info("ℹ️ Оптимізація не знайшла кращого рішення. Стандартний спліт є оптимальним у межах заданих відхилень.")
                 
                 st.subheader("📊 Результати оптимізації")
 
