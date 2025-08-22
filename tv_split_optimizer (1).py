@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 # --- Функції ---
 def validate_excel_file(df_standard):
-    required_cols_standard = ['Канал', 'СХ', 'Ціна', 'Affinity', 'Бюджет (%)']
+    required_cols_standard = ['Канал', 'СХ', 'Affinity', 'Бюджет (%)']
     for col in required_cols_standard:
         if col not in df_standard.columns:
             st.error(f"❌ В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
@@ -26,6 +26,7 @@ def apply_budget_limits(df, min_share, max_share):
 
 def calculate_grp_trp(df):
     df = df.copy()
+    # GRP як бюджет / ціна
     df['GRP'] = df['Оптимальний бюджет'] / df['Ціна_оптимальна']
     df['TRP'] = df['GRP'] * df['Affinity']
     return df
@@ -57,12 +58,9 @@ if uploaded_file:
     st.subheader("🎯 Вибір БА для кожного СХ")
     buying_audiences = {}
     for sh in all_sh:
-        # Визначаємо стовпці бюджету та ціни для СХ
-        budget_cols = [col for col in df.columns if col.startswith(f'Бюджет_{sh}')]
-        price_cols = [col for col in df.columns if col.startswith(f'Ціна_{sh}')]
-        budget_col = budget_cols[0] if budget_cols else 'Бюджет (%)'
-        price_col = price_cols[0] if price_cols else 'Ціна'
-        buying_audiences[sh] = {'budget': budget_col, 'price': price_col}
+        ba_options = [col.replace('Ціна_', '') for col in df.columns if col.startswith('Ціна_')]
+        ba = st.selectbox(f"СХ: {sh}", ba_options, key=sh)
+        buying_audiences[sh] = ba
 
     # Підготовка топ-каналів
     top_channel_groups = {
@@ -87,11 +85,15 @@ if uploaded_file:
 
     # Підготовка базових колонок бюджету і ціни
     df['Бюджет_оптимальний'] = df.apply(
-        lambda row: row.get(buying_audiences.get(row['СХ'], {}).get('budget', 'Бюджет (%)')), axis=1
+        lambda row: row.get(f'Бюджет_{buying_audiences.get(row["СХ"], "")}', row['Бюджет (%)']),
+        axis=1
     )
     df['Ціна_оптимальна'] = df.apply(
-        lambda row: row.get(buying_audiences.get(row['СХ'], {}).get('price', 'Ціна')), axis=1
+        lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', np.nan),
+        axis=1
     )
+    # Якщо Ціна немає, ставимо 1, щоб не було ділення на нуль
+    df['Ціна_оптимальна'].fillna(1.0, inplace=True)
 
     if st.button("🚀 Запустити оптимізацію"):
         all_results = pd.DataFrame()
