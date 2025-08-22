@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 # --- Функції ---
 def validate_excel_file(df_standard):
-    required_cols_standard = ['Канал', 'СХ', 'Ціна', 'Affinity']
+    required_cols_standard = ['Канал', 'СХ', 'Ціна', 'Affinity', 'Бюджет (%)']
     for col in required_cols_standard:
         if col not in df_standard.columns:
             st.error(f"❌ В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
@@ -57,6 +57,7 @@ if uploaded_file:
     st.subheader("🎯 Вибір БА для кожного СХ")
     buying_audiences = {}
     for sh in all_sh:
+        # Визначаємо стовпці бюджету та ціни для СХ
         budget_cols = [col for col in df.columns if col.startswith(f'Бюджет_{sh}')]
         price_cols = [col for col in df.columns if col.startswith(f'Ціна_{sh}')]
         budget_col = budget_cols[0] if budget_cols else 'Бюджет (%)'
@@ -98,6 +99,7 @@ if uploaded_file:
             df_sh = df[df['СХ']==sh].copy()
             df_sh = apply_budget_limits(df_sh, min_share, max_share)
             df_sh = calculate_grp_trp(df_sh)
+            # Сумарна частка бюджету топ-каналів по СХ
             mask_top = df_sh['Канал'].isin(all_top_channels)
             sum_top_budget = df_sh.loc[mask_top, 'Оптимальний бюджет'].sum()
             df_sh['Сумарна частка бюджету топ-каналів (%)'] = sum_top_budget
