@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-from scipy.optimize import linprog
 import matplotlib.pyplot as plt
 
 # --- Функції для валідації та оптимізації ---
@@ -15,12 +14,43 @@ def validate_excel_file(df_standard):
             return False
     return True
 
-def hybrid_optimization(df, goal, buying_audiences, deviation_df, use_linprog_threshold=20):
+def heuristic_split(group_df):
     """
-    Гібридна оптимізація спліта:
-    - Для груп з менше use_linprog_threshold каналів використовуємо linprog.
-    - Для великих груп — евристичний розподіл слотів пропорційно ефективності.
+    Евристичний розподіл слотів для всіх каналів, з дотриманням мін/макс відхилень.
     """
+    # Мін/макс слоти
+    min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int)
+    max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int)
+    
+    total_slots = group_df['Стандартні слоти'].sum()
+    # Початковий розподіл пропорційно TRP
+    slots = np.round(group_df['TRP'] / group_df['TRP'].sum() * total_slots).astype(int)
+    
+    # Коригуємо, щоб всі слоти були в межах min/max
+    slots = np.clip(slots, min_slots, max_slots)
+    
+    # Перерозподіл залишку
+    diff = total_slots - slots.sum()
+    while diff != 0:
+        if diff > 0:
+            # додаємо 1 слот каналу з найвищою ефективністю і можливістю збільшення
+            candidates = (slots < max_slots)
+            if not any(candidates):
+                break
+            idx = np.argmax(group_df['TRP'][candidates])
+            slots[candidates][idx] += 1
+            diff -= 1
+        else:
+            # забираємо 1 слот каналу з найменшою ефективністю і можливістю зменшення
+            candidates = (slots > min_slots)
+            if not any(candidates):
+                break
+            idx = np.argmin(group_df['TRP'][candidates])
+            slots[candidates][idx] -= 1
+            diff += 1
+    return slots
+
+def run_heuristic_optimization(df, goal, buying_audiences, deviation_df):
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     
@@ -36,42 +66,13 @@ def hybrid_optimization(df, goal, buying_audiences, deviation_df, use_linprog_th
     all_results = pd.DataFrame()
     
     for sh, group_df in df.groupby('СХ'):
-        n_channels = len(group_df)
-        
-        # Вираховуємо мін/макс слоти для відхилень
-        min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int)
-        max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int)
-        
-        if n_channels <= use_linprog_threshold:
-            # --- Linprog оптимізація ---
-            c = group_df['Ціна'].values
-            A_ub = np.diag(group_df['TRP'].values)
-            b_ub = max_slots * group_df['TRP']
-            A_lb = -np.diag(group_df['TRP'].values)
-            b_lb = -min_slots * group_df['TRP']
-            A = np.vstack((A_ub, A_lb, -group_df[goal].values.reshape(1,-1)))
-            b = np.concatenate((b_ub, b_lb, [-group_df[f'Стандартний {goal}'].sum()]))
-            bounds = [(1, None) for _ in range(n_channels)]
-            result = linprog(c, A_ub=A, b_ub=b, bounds=bounds, method='highs')
-            
-            if result.success:
-                slots = result.x.round(0).astype(int)
-            else:
-                # Якщо linprog не працює — евристика
-                slots = np.clip(np.round(group_df['TRP']/group_df['TRP'].sum()*n_channels), min_slots, max_slots)
-        else:
-            # --- Евристика ---
-            total_slots = n_channels  # початково кількість слотів = кількість каналів
-            slots = np.round(group_df['TRP']/group_df['TRP'].sum()*total_slots).astype(int)
-            slots = np.clip(slots, min_slots, max_slots)
-        
+        slots = heuristic_split(group_df)
         group_df['Оптимальні слоти'] = slots
         group_df['Оптимальний TRP'] = slots * group_df['TRP']
         group_df['Оптимальний Aff'] = slots * group_df['Aff']
+        group_df['Оптимальний бюджет'] = slots * group_df['Ціна']
+        group_df['Стандартний бюджет'] = group_df['Стандартні слоти'] * group_df['Ціна']
         all_results = pd.concat([all_results, group_df])
-    
-    all_results['Оптимальний бюджет'] = all_results['Оптимальні слоти'] * all_results['Ціна']
-    all_results['Стандартний бюджет'] = all_results['Стандартні слоти'] * all_results['Ціна']
     
     return all_results
 
@@ -112,7 +113,7 @@ if uploaded_file:
     edited_deviation_df = st.data_editor(deviation_df, num_rows="dynamic")
     
     if st.button("🚀 Запустити оптимізацію"):
-        all_results = hybrid_optimization(df.copy(), goal, buying_audiences, edited_deviation_df)
+        all_results = run_heuristic_optimization(df.copy(), goal, buying_audiences, edited_deviation_df)
         
         st.subheader("📊 Результати оптимізації по СХ")
         for sh in all_results['СХ'].unique():
@@ -126,6 +127,23 @@ if uploaded_file:
                                 'Оптимальні слоти','Оптимальний TRP','Оптимальний Aff',
                                 'Стандартна частка TRP','Оптимальна частка TRP',
                                 'Стандартна частка бюджету','Оптимальна частка бюджету']].set_index('Канал'))
+        
+        # --- Графіки ---
+        st.subheader("📊 Графіки сплітів")
+        for sh in all_results['СХ'].unique():
+            sh_df = all_results[all_results['СХ']==sh]
+            fig, ax = plt.subplots(figsize=(10,5))
+            width = 0.35
+            x = np.arange(len(sh_df))
+            ax.bar(x - width/2, sh_df['Стандартний бюджет'], width, label='Стандартний', color='gray')
+            ax.bar(x + width/2, sh_df['Оптимальний бюджет'], width, label='Оптимальний', color='skyblue')
+            ax.set_xticks(x)
+            ax.set_xticklabels(sh_df['Канал'], rotation=45, ha='right')
+            ax.set_ylabel('Бюджет')
+            ax.set_title(f"СХ: {sh} — Розподіл бюджету по каналах")
+            ax.legend()
+            ax.grid(axis='y')
+            st.pyplot(fig)
         
         # --- Кнопка для експорту в Excel ---
         output = io.BytesIO()
