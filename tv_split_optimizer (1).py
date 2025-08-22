@@ -20,7 +20,7 @@ def validate_excel_file(df_standard):
     
     return True
 
-def run_optimization(df, goal, mode, buying_audiences, deviation_df):
+def run_optimization(df, goal, mode, buying_audiences):
     """
     Виконує оптимізацію ТВ-спліта на основі даних і налаштувань.
     Повертає датафрейм з результатами оптимізації.
@@ -37,45 +37,23 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
     df['Стандартний TRP'] = df['TRP']
     df['Стандартні слоти'] = 1  
     
-    # Об'єднуємо дані з таблиці відхилень
-    df = df.merge(deviation_df, on='Канал', how='left').fillna(0)
-    
     all_results = pd.DataFrame()
     
     if mode == 'per_sh':
         with st.spinner('Проводимо оптимізацію за кожним СХ...'):
             for sales_house, group_df in df.groupby('СХ'):
-                group_standard_trp = group_df['Стандартний TRP'].sum()
-                if group_standard_trp == 0:
-                    st.warning(f"Недостатньо даних для СХ {sales_house}. Пропускаємо...")
-                    continue
-                
-                group_df['Стандартна доля TRP'] = group_df['Стандартний TRP'] / group_standard_trp
                 
                 # Завдання для linprog
                 c = group_df['Ціна'].values # Мета - мінімізувати вартість
 
-                # Обмеження на частку TRP по кожному каналу
-                A_upper = pd.get_dummies(group_df['Канал']).mul(group_df['TRP'], axis=0).values
-                b_upper = (1 + group_df['Максимальне відхилення'] / 100) * group_df['Стандартний TRP']
-                
-                A_lower = -pd.get_dummies(group_df['Канал']).mul(group_df['TRP'], axis=0).values
-                b_lower = -(1 - group_df['Мінімальне відхилення'] / 100) * group_df['Стандартний TRP']
-
-                A = list(A_upper) + list(A_lower)
-                b = list(b_upper) + list(b_lower)
-
-                # Додаємо нове обмеження: загальний рейтинг (TRP або Aff) має бути не менше стандартного
+                # Обмеження: загальний рейтинг (TRP або Aff) має бути не менше стандартного
                 A_ub_goal = [-group_df[goal].values]
                 b_ub_goal = [-group_df[f'Стандартний {goal}'].sum()]
 
-                A.extend(A_ub_goal)
-                b.extend(b_ub_goal)
-                
                 # Кожен канал повинен мати хоча б 1 слот
                 bounds = [(1, None) for _ in range(len(group_df))]
 
-                result = linprog(c, A_ub=A, b_ub=b, bounds=bounds)
+                result = linprog(c, A_ub=A_ub_goal, b_ub=b_ub_goal, bounds=bounds)
                 
                 if result.success:
                     slots = result.x.round(0).astype(int)
@@ -93,25 +71,12 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
             # Завдання для linprog
             c = df['Ціна'].values # Мета - мінімізувати вартість
 
-            # Обмеження на частку TRP по кожному каналу
-            A_upper = pd.get_dummies(df['Канал']).mul(df['TRP'], axis=0).values
-            b_upper = (1 + df['Максимальне відхилення'] / 100) * df['Стандартний TRP']
-            
-            A_lower = -pd.get_dummies(df['Канал']).mul(df['TRP'], axis=0).values
-            b_lower = -(1 - df['Мінімальне відхилення'] / 100) * df['Стандартний TRP']
-
-            A = list(A_upper) + list(A_lower)
-            b = list(b_upper) + list(b_lower)
-            
-            # Додаємо нове обмеження: загальний рейтинг (TRP або Aff) має бути не менше стандартного
+            # Обмеження: загальний рейтинг (TRP або Aff) має бути не менше стандартного
             A_ub_goal = [-df[goal].values]
             b_ub_goal = [-df[f'Стандартний {goal}'].sum()]
-
-            A.extend(A_ub_goal)
-            b.extend(b_ub_goal)
-
+            
             bounds = [(1, None) for _ in range(len(df))]
-            result = linprog(c, A_ub=A, b_ub=b, bounds=bounds)
+            result = linprog(c, A_ub=A_ub_goal, b_ub=b_ub_goal, bounds=bounds)
             
             if result.success:
                 slots = result.x.round(0).astype(int)
@@ -163,24 +128,8 @@ if uploaded_file:
             ba = st.selectbox(f"СХ: {sh}", all_ba, key=sh)
             buying_audiences[sh] = ba
         
-        st.subheader("📊 Налаштування відхилень по каналах")
-        
-        channels_20_percent = ['Новий канал', 'ICTV2', 'СТБ', '1+1 Україна', 'TET', '2+2', 'НТН']
-
-        deviation_df = all_data[['Канал']].copy()
-        
-        def set_default_deviation(channel):
-            if channel in channels_20_percent:
-                return 20.0
-            return 30.0
-
-        deviation_df['Мінімальне відхилення'] = deviation_df['Канал'].apply(set_default_deviation)
-        deviation_df['Максимальне відхилення'] = deviation_df['Канал'].apply(set_default_deviation)
-        
-        edited_deviation_df = st.data_editor(deviation_df, num_rows="dynamic")
-        
         if st.button("🚀 Запустити оптимізацію"):
-            all_results = run_optimization(all_data.copy(), goal, mode, buying_audiences, edited_deviation_df)
+            all_results = run_optimization(all_data.copy(), goal, mode, buying_audiences)
             
             if not all_results.empty:
                 # Розрахунок бюджетів
@@ -204,8 +153,10 @@ if uploaded_file:
                 cpt_std = total_budget_std / total_aff_std if total_aff_std > 0 else 0
                 
                 # Перевірка, чи відбулася оптимізація
-                if (all_results['Оптимальні слоти'] == all_results['Стандартні слоти']).all():
-                    st.info("ℹ️ Оптимізація не знайшла кращого рішення. Стандартний спліт є оптимальним у межах заданих відхилень. Спробуйте збільшити відсотки відхилення.")
+                if total_budget_opt == total_budget_std:
+                    st.info("ℹ️ Оптимізація не знайшла можливості зменшити вартість. Поточний спліт є найоптимальнішим.")
+                else:
+                    st.success("✅ Оптимізація успішно завершена! Знайдено більш вигідний спліт.")
                 
                 st.subheader("📊 Результати оптимізації")
 
@@ -230,6 +181,14 @@ if uploaded_file:
                     display_df_channels = all_results[['Канал', 'СХ', 
                                                        'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 
                                                        'Оптимальні слоти', 'Оптимальний TRP', 'Оптимальний Aff']].copy()
+                    
+                    # Розрахунок частки TRP і бюджету
+                    display_df_channels['Стандартна частка TRP'] = (display_df_channels['Стандартний TRP'] / display_df_channels['Стандартний TRP'].sum()) * 100
+                    display_df_channels['Оптимальна частка TRP'] = (display_df_channels['Оптимальний TRP'] / display_df_channels['Оптимальний TRP'].sum()) * 100
+                    
+                    display_df_channels['Стандартна частка бюджету'] = (all_results['Стандартний бюджет'] / all_results['Стандартний бюджет'].sum()) * 100
+                    display_df_channels['Оптимальна частка бюджету'] = (all_results['Оптимальний бюджет'] / all_results['Оптимальний бюджет'].sum()) * 100
+                    
                     st.dataframe(display_df_channels.set_index('Канал'))
                 
                 with tab2:
