@@ -14,38 +14,42 @@ def validate_excel_file(df_standard):
             return False
     return True
 
-def heuristic_split(group_df):
+def heuristic_split_cost_based(group_df):
     """
-    Евристичний розподіл (жорстке правило: всі канали в спліті):
-    - Всі канали залишаються.
-    - Мінімальна кількість слотів визначена через мінімальне відхилення.
-    - Неефективні канали залишаються на мінімумі.
-    - Решта слотів розподіляється пропорційно TRP для ефективних каналів.
+    Евристичний розподіл на основі вартості:
+    1. Всі канали присутні.
+    2. Мінімальні слоти = мінімальне відхилення.
+    3. Розподіл залишку: найдешевший канал отримує максимум, дорожчі — залишок.
     """
+    # Мінімальні та максимальні слоти
     min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int).to_numpy()
     max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int).to_numpy()
-    std_slots = group_df['Стандартні слоти'].to_numpy(dtype=int)
     
-    # Всі канали отримують мінімальні слоти
+    # Початкові слоти — мінімальні
     slots = min_slots.copy()
-    trp_values = group_df['TRP'].to_numpy()
     
-    # Ефективні канали (верхні 75% по TRP)
-    threshold = np.percentile(trp_values, 25)
-    eff_idx = np.where(trp_values > threshold)[0]
+    # Вартість за одиницю TRP
+    cost_per_trp = np.divide(group_df['Ціна'].to_numpy(), group_df['TRP'].to_numpy(), 
+                             out=np.full_like(group_df['TRP'].to_numpy(), np.inf, dtype=float), where=group_df['TRP']!=0)
     
-    # Загальна кількість слотів
-    total_std = std_slots.sum()
+    # Залишок слотів
+    total_std = group_df['Стандартні слоти'].sum()
     allocated = slots.sum()
     remaining = total_std - allocated
     
-    # Розподіляємо залишок тільки між ефективними каналами
-    if remaining > 0 and len(eff_idx) > 0:
-        eff_trp = trp_values[eff_idx]
-        for _ in range(remaining):
-            idx = eff_idx[np.argmax(eff_trp / (slots[eff_idx] + 1e-6))]
+    # Індекс каналів від найдешевшого до дорожчого
+    sorted_idx = np.argsort(cost_per_trp)
+    
+    # Розподіл залишку по порядку дешевизни
+    while remaining > 0:
+        for idx in sorted_idx:
             if slots[idx] < max_slots[idx]:
                 slots[idx] += 1
+                remaining -= 1
+                if remaining <= 0:
+                    break
+        if all(slots >= max_slots):
+            break  # не залишилося місця для розподілу
     
     return pd.Series(slots, index=group_df.index)
 
@@ -65,7 +69,7 @@ def run_heuristic_optimization(df, goal, buying_audiences, deviation_df):
     all_results = pd.DataFrame()
     
     for sh, group_df in df.groupby('СХ'):
-        slots = heuristic_split(group_df)
+        slots = heuristic_split_cost_based(group_df)
         group_df['Оптимальні слоти'] = slots
         group_df['Оптимальний TRP'] = slots * group_df['TRP']
         group_df['Оптимальний Aff'] = slots * group_df['Aff']
