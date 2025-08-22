@@ -67,7 +67,10 @@ def run_optimization(df, total_budget, goal, mode, buying_audiences, deviation_d
                 A = A_ub + list(A_lower) + list(A_upper)
                 b = b_ub + list(b_lower) + list(b_upper)
                 
-                result = linprog(c, A_ub=A, b_ub=b, bounds=(0, None))
+                # Оновлене обмеження: кожен канал повинен мати хоча б 1 слот.
+                bounds = [(1, None) for _ in range(len(group_df))]
+
+                result = linprog(c, A_ub=A, b_ub=b, bounds=bounds)
                 
                 if result.success:
                     slots = result.x.round(0).astype(int)
@@ -95,8 +98,11 @@ def run_optimization(df, total_budget, goal, mode, buying_audiences, deviation_d
             b_upper = df['Верхня межа'].values
             A = A_ub + list(A_lower) + list(A_upper)
             b = b_ub + list(b_lower) + list(b_upper)
+            
+            # Оновлене обмеження: кожен канал повинен мати хоча б 1 слот.
+            bounds = [(1, None) for _ in range(len(df))]
 
-            result = linprog(c, A_ub=A, b_ub=b, bounds=(0, None))
+            result = linprog(c, A_ub=A, b_ub=b, bounds=bounds)
             
             if result.success:
                 slots = result.x.round(0).astype(int)
