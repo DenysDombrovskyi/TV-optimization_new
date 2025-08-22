@@ -129,7 +129,7 @@ uploaded_file = st.file_uploader("Завантажте Excel-файл з дан�
 if uploaded_file:
     try:
         with st.spinner('Завантаження та обробка даних...'):
-            standard_df = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=1, engine="openpyxl")
+            standard_df = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
             aff_df = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", skiprows=7, engine="openpyxl")
             aff_df = aff_df.iloc[:, [0, 1]].copy()
             aff_df.columns = ['Канал', 'Aff']
