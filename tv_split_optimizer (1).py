@@ -16,7 +16,7 @@ def validate_excel_file(df_standard):
 
 def heuristic_split_within_group(group_df, total_group_budget):
     """
-    Розподіляє фіксований бюджет всередині групи каналів, 
+    Розподіляє фіксований бюджет всередині групи каналів,
     оптимізуючи за вартістю TRP.
     """
     if group_df.empty or total_group_budget == 0:
@@ -24,37 +24,35 @@ def heuristic_split_within_group(group_df, total_group_budget):
         group_df['Оптимальний бюджет'] = 0
         return group_df
     
-    # Розрахунок вартості за TRP
-    cost_per_trp = np.divide(group_df['Ціна'].to_numpy(), group_df['TRP'].to_numpy(),
+    # Розрахунок вартості за TRP (як pandas Series для збереження індексів)
+    cost_per_trp_series = np.divide(group_df['Ціна'], group_df['TRP'],
                              out=np.full_like(group_df['TRP'].to_numpy(), np.inf, dtype=float),
                              where=group_df['TRP']!=0)
-
-    # Сортування від найдешевшого до найдорожчого
-    sorted_idx = np.argsort(cost_per_trp)
+    
+    # Сортування індексів від найдешевшого до найдорожчого
+    sorted_indices = cost_per_trp_series.sort_values().index
     
     # Розподіл бюджету
-    shares = np.zeros(len(group_df))
+    shares = pd.Series(0.0, index=group_df.index)
     remaining_budget = total_group_budget
-    total_trp = 0
 
-    for idx in sorted_idx:
-        # Евристично додаємо бюджет, пропорційно TRP, починаючи з найдешевших
-        if cost_per_trp[idx] != np.inf:
-            budget_to_add = min(remaining_budget, group_df.iloc[idx]['Ціна'] * group_df.iloc[idx]['TRP'])
-            shares[idx] = budget_to_add
+    for idx in sorted_indices:
+        # Доступ до даних за індексом з оригінального DataFrame
+        row = group_df.loc[idx]
+        cost = cost_per_trp_series.loc[idx]
+        
+        if pd.notna(cost) and cost != np.inf:
+            budget_to_add = min(remaining_budget, row['Ціна'] * row['TRP'])
+            shares.loc[idx] = budget_to_add
             remaining_budget -= budget_to_add
-            total_trp += budget_to_add / group_df.iloc[idx]['Ціна']
+        
         if remaining_budget <= 0:
             break
 
-    # Нормалізація, щоб сума була точно дорівнювала загальному бюджету
-    shares = shares / shares.sum() * total_group_budget if shares.sum() > 0 else shares
-
     group_df['Оптимальний бюджет'] = shares
-    total_campaign_budget = group_df['Ціна'].sum() * group_df['TRP'].sum() # Некоректний розрахунок
-    # Правильний розрахунок повної суми бюджету для СХ
     total_sx_budget = (group_df['Ціна'] * group_df['TRP']).sum() 
     
+    # Перераховуємо відсотки
     group_df['Оптимальна частка (%)'] = (group_df['Оптимальний бюджет'] / total_sx_budget) * 100
     
     return group_df
@@ -136,7 +134,6 @@ if uploaded_file:
     st.markdown("Попередній механізм відхилень видалено. **Тепер оптимізація працює за правилом: "
                 "сумарний бюджет для Топ-каналів фіксується і розподіляється всередині групи.**")
     
-    # Список Топ-каналів, який ви надавали
     channels_20_percent = ['Новий канал', 'ICTV2', 'СТБ', '1+1 Україна', 'TET', '2+2', 'НТН']
     
     if st.button("🚀 Запустити оптимізацію"):
