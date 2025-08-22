@@ -7,90 +7,36 @@ import matplotlib.pyplot as plt
 # --- Функції ---
 
 def validate_excel_file(df_standard):
-    required_cols_standard = ['Канал', 'СХ']
+    required_cols_standard = ['Канал', 'СХ', 'Бюджет (%)']
     for col in required_cols_standard:
         if col not in df_standard.columns:
             st.error(f"❌ В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
             return False
     return True
 
-def heuristic_split_within_group(group_df, total_group_budget, min_share, max_share):
-    """Розподіляє фіксований бюджет всередині групи каналів з обмеженням часток"""
-    if group_df.empty or total_group_budget == 0:
-        group_df['Оптимальна частка (%)'] = 0
-        group_df['Оптимальний бюджет'] = 0
-        return group_df
+def apply_budget_limits(df, min_share, max_share):
+    """
+    Коригує бюджети в межах допустимих відхилень.
+    Використовує спліт з Excel як базу.
+    """
+    df = df.copy()
+    df['Оптимальний бюджет'] = df['Бюджет (%)']
+    for idx, row in df.iterrows():
+        channel = row['Канал']
+        base = row['Бюджет (%)']
+        min_val = min_share.get(channel, 0)
+        max_val = max_share.get(channel, 100)
+        # обмежуємо бюджет
+        df.at[idx, 'Оптимальний бюджет'] = np.clip(base, min_val, max_val)
+    # нормалізація так, щоб сума 100%
+    df['Оптимальний бюджет'] = df['Оптимальний бюджет'] / df['Оптимальний бюджет'].sum() * 100
+    return df
 
-    shares = pd.Series(0.0, index=group_df.index)
-    remaining_budget = total_group_budget
-
-    # Встановлюємо мінімальні бюджети
-    min_budgets = group_df['Канал'].map(lambda x: min_share.get(x, 0)/100 * total_group_budget)
-    max_budgets = group_df['Канал'].map(lambda x: max_share.get(x, 100)/100 * total_group_budget)
-
-    # Спочатку виділяємо мінімальні бюджети
-    shares = min_budgets.copy()
-    remaining_budget -= shares.sum()
-
-    if remaining_budget > 0:
-        # Пропорційно Affinity, не перевищуючи max
-        total_affinity = group_df['Affinity'].sum()
-        additional = (group_df['Affinity']/total_affinity) * remaining_budget
-        shares += additional
-        # Перевірка max
-        shares = np.minimum(shares, max_budgets)
-
-    group_df['Оптимальний бюджет'] = shares
-    group_df['Оптимальна частка (%)'] = (shares / shares.sum()) * 100
-    return group_df
-
-def run_multi_group_optimization(df, buying_audiences, top_channel_groups, min_share, max_share):
-    df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
-    df['Affinity'] = df.apply(lambda row: row.get(f'Affinity_{buying_audiences.get(row["СХ"], "")}', 1.0), axis=1)
-
-    # TRP якщо немає
-    for sh in df['СХ'].unique():
-        df_sh = df[df['СХ']==sh]
-        total_price = df_sh['Ціна'].sum()
-        df.loc[df['СХ']==sh, 'TRP'] = (df_sh['Ціна']/total_price) * df_sh['Affinity']
-
-    all_results = pd.DataFrame()
-    all_top_channels = [ch for sublist in top_channel_groups.values() for ch in sublist]
-
-    for sh, group_df in df.groupby('СХ'):
-        optimized_group = pd.DataFrame()
-        remaining_df_for_opt = group_df.copy()
-
-        # Оптимізація топ-каналів
-        for group_name, channels_list in top_channel_groups.items():
-            df_group = remaining_df_for_opt[remaining_df_for_opt['Канал'].isin(channels_list)].copy()
-            if not df_group.empty:
-                total_group_budget = df_group['Ціна'].sum()
-                results_group = heuristic_split_within_group(df_group, total_group_budget, min_share, max_share)
-                optimized_group = pd.concat([optimized_group, results_group])
-                remaining_df_for_opt = remaining_df_for_opt[~remaining_df_for_opt['Канал'].isin(channels_list)]
-
-        # Решта каналів
-        if not remaining_df_for_opt.empty:
-            total_remaining_budget = remaining_df_for_opt['Ціна'].sum()
-            results_remaining = heuristic_split_within_group(remaining_df_for_opt, total_remaining_budget, min_share, max_share)
-            optimized_group = pd.concat([optimized_group, results_remaining])
-
-        # Перерахунок частки
-        optimized_group['Оптимальна частка (%)'] = (optimized_group['Оптимальний бюджет'] / optimized_group['Оптимальний бюджет'].sum()) * 100
-
-        # GRP та TRP
-        optimized_group['GRP'] = optimized_group['Оптимальний бюджет'] / optimized_group['Ціна']
-        optimized_group['TRP'] = optimized_group['GRP'] * optimized_group['Affinity']
-
-        # Сумарна частка бюджету топ-каналів
-        mask_top = optimized_group['Канал'].isin(all_top_channels)
-        sum_top_budget = optimized_group.loc[mask_top, 'Оптимальний бюджет'].sum()
-        optimized_group['Сумарна частка бюджету топ-каналів (%)'] = sum_top_budget / optimized_group['Оптимальний бюджет'].sum() * 100
-
-        all_results = pd.concat([all_results, optimized_group])
-
-    return all_results.sort_values(['СХ'])
+def calculate_grp_trp(df):
+    df = df.copy()
+    df['GRP'] = df['Оптимальний бюджет'] / df['Ціна']
+    df['TRP'] = df['GRP'] * df['Affinity']
+    return df
 
 def highlight_top_channels(row, top_channels):
     is_top_channel = row['Канал'] in top_channels
@@ -114,72 +60,61 @@ if uploaded_file:
         st.stop()
 
     all_sh = df['СХ'].unique()
-    all_ba = [col.replace('Ціна_', '') for col in df.columns if 'Ціна_' in col]
 
     st.header("🔧 Налаштування оптимізації")
-    st.subheader("🎯 Вибір БА для кожного СХ")
-    buying_audiences = {}
-    for sh in all_sh:
-        ba = st.selectbox(f"СХ: {sh}", all_ba, key=sh)
-        buying_audiences[sh] = ba
-
     st.subheader("📊 Групування каналів та обмеження часток")
-    st.markdown("Можна задати мінімальну і максимальну частку бюджету (%) для кожного каналу:")
 
     top_channel_groups = {
         'Оушен': ['СТБ', 'Новий канал', 'ICTV2'],
         'Sirius': ['1+1 Україна', 'ТЕТ', '2+2'],
         'Space': ['НТН']
     }
+    all_top_channels = [ch for sublist in top_channel_groups.values() for ch in sublist]
 
     min_share = {}
     max_share = {}
-    all_channels = df['Канал'].unique()
-    all_top_channels = [channel for sublist in top_channel_groups.values() for channel in sublist]
-
-    for channel in all_channels:
+    for channel in df['Канал'].unique():
         if channel in all_top_channels:
             min_val = 80.0
             max_val = 120.0
         else:
             min_val = 70.0
             max_val = 130.0
-
-        col1, col2 = st.columns(2)
-        with col1:
-            min_input = st.number_input(f"Min % {channel}", min_value=0.0, max_value=1000.0, value=min_val, step=1.0, key=f"min_{channel}")
-            min_share[channel] = min_input
-        with col2:
-            max_input = st.number_input(f"Max % {channel}", min_value=0.0, max_value=1000.0, value=max_val, step=1.0, key=f"max_{channel}")
-            max_share[channel] = max_input
+        min_share[channel] = min_val
+        max_share[channel] = max_val
 
     if st.button("🚀 Запустити оптимізацію"):
-        all_results = run_multi_group_optimization(df.copy(), buying_audiences, top_channel_groups, min_share, max_share)
+        all_results = pd.DataFrame()
+        for sh in all_sh:
+            df_sh = df[df['СХ']==sh].copy()
+            df_sh = apply_budget_limits(df_sh, min_share, max_share)
+            df_sh = calculate_grp_trp(df_sh)
+            # Сумарна частка топ-каналів по бюджету
+            mask_top = df_sh['Канал'].isin(all_top_channels)
+            sum_top_budget = df_sh.loc[mask_top, 'Оптимальний бюджет'].sum()
+            df_sh['Сумарна частка бюджету топ-каналів (%)'] = sum_top_budget
+            all_results = pd.concat([all_results, df_sh])
 
         st.subheader("📊 Результати оптимізації по СХ")
         for sh in all_results['СХ'].unique():
             st.markdown(f"##### СХ: {sh}")
             sh_df = all_results[all_results['СХ']==sh].copy()
-            sh_df_sorted = sh_df  # порядок не змінюємо
-            sh_df_sorted['Початковий бюджет'] = sh_df_sorted['TRP'] * sh_df_sorted['Ціна']
-
             st.dataframe(
-                sh_df_sorted[['Канал', 'Початковий бюджет', 'Оптимальний бюджет', 'GRP', 'TRP', 'Оптимальна частка (%)', 'Сумарна частка бюджету топ-каналів (%)']]
+                sh_df[['Канал', 'Бюджет (%)', 'Оптимальний бюджет', 'GRP', 'TRP', 'Сумарна частка бюджету топ-каналів (%)']]
                 .style.apply(highlight_top_channels, axis=1, top_channels=all_top_channels)
             )
 
-            st.markdown(f"**Сумарний початковий бюджет:** `{sh_df_sorted['Початковий бюджет'].sum():,.2f}`")
-            st.markdown(f"**Сумарний оптимальний бюджет:** `{sh_df_sorted['Оптимальний бюджет'].sum():,.2f}`")
-            st.markdown(f"**Сумарний бюджет Топ-каналів:** `{sh_df_sorted[sh_df_sorted['Канал'].isin(all_top_channels)]['Оптимальний бюджет'].sum():,.2f}`")
+            st.markdown(f"**Сумарний оптимальний бюджет:** `{sh_df['Оптимальний бюджет'].sum():,.2f}`")
+            st.markdown(f"**Сумарний бюджет топ-каналів:** `{sh_df.loc[sh_df['Канал'].isin(all_top_channels), 'Оптимальний бюджет'].sum():,.2f}`")
 
         st.subheader("📊 Графіки сплітів")
         for sh in all_results['СХ'].unique():
             sh_df = all_results[all_results['СХ']==sh]
             fig, ax = plt.subplots(figsize=(10,5))
             colors = ['lightgreen' if c==sh_df['Ціна'].min() else 'salmon' if c==sh_df['Ціна'].max() else 'skyblue' for c in sh_df['Ціна']]
-            ax.bar(sh_df['Канал'], sh_df['Оптимальна частка (%)'], color=colors)
-            ax.set_ylabel('Частка (%)')
-            ax.set_title(f"СХ: {sh} — Оптимальна частка по каналах")
+            ax.bar(sh_df['Канал'], sh_df['Оптимальний бюджет'], color=colors)
+            ax.set_ylabel('Бюджет (%)')
+            ax.set_title(f"СХ: {sh} — Оптимальний спліт по каналах")
             ax.set_xticklabels(sh_df['Канал'], rotation=45, ha='right')
             ax.grid(axis='y')
             st.pyplot(fig)
