@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 # --- Функції ---
 def validate_excel_file(df_standard):
-    required_cols_standard = ['Канал', 'СХ', 'Affinity', 'Бюджет (%)']
+    required_cols_standard = ['Канал', 'СХ', 'Бюджет (%)']
     for col in required_cols_standard:
         if col not in df_standard.columns:
             st.error(f"❌ В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
@@ -26,7 +26,6 @@ def apply_budget_limits(df, min_share, max_share):
 
 def calculate_grp_trp(df):
     df = df.copy()
-    # GRP як бюджет / ціна
     df['GRP'] = df['Оптимальний бюджет'] / df['Ціна_оптимальна']
     df['TRP'] = df['GRP'] * df['Affinity']
     return df
@@ -44,10 +43,17 @@ uploaded_file = st.file_uploader("Завантажте Excel-файл з дан�
 
 if uploaded_file:
     try:
-        df = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
-        if not validate_excel_file(df):
+        df_main = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
+        df_affinity = pd.read_excel(uploaded_file, sheet_name="Affinity", engine="openpyxl")
+        
+        if not validate_excel_file(df_main):
             st.stop()
         st.success("✅ Дані успішно завантажено!")
+        
+        # З'єднуємо основний лист із Affinity по Каналу
+        df = df_main.merge(df_affinity, on='Канал', how='left')
+        df['Affinity'].fillna(1.0, inplace=True)  # якщо немає Affinity, ставимо 1.0
+        
     except Exception as e:
         st.error(f"❌ Помилка при завантаженні файлу: {e}")
         st.stop()
@@ -62,7 +68,7 @@ if uploaded_file:
         ba = st.selectbox(f"СХ: {sh}", ba_options, key=sh)
         buying_audiences[sh] = ba
 
-    # Підготовка топ-каналів
+    # Топ-канали
     top_channel_groups = {
         'Оушен': ['СТБ', 'Новий канал', 'ICTV2'],
         'Sirius': ['1+1 Україна', 'ТЕТ', '2+2'],
@@ -89,11 +95,9 @@ if uploaded_file:
         axis=1
     )
     df['Ціна_оптимальна'] = df.apply(
-        lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', np.nan),
+        lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 1.0),
         axis=1
     )
-    # Якщо Ціна немає, ставимо 1, щоб не було ділення на нуль
-    df['Ціна_оптимальна'].fillna(1.0, inplace=True)
 
     if st.button("🚀 Запустити оптимізацію"):
         all_results = pd.DataFrame()
@@ -101,10 +105,12 @@ if uploaded_file:
             df_sh = df[df['СХ']==sh].copy()
             df_sh = apply_budget_limits(df_sh, min_share, max_share)
             df_sh = calculate_grp_trp(df_sh)
+            
             # Сумарна частка бюджету топ-каналів по СХ
             mask_top = df_sh['Канал'].isin(all_top_channels)
             sum_top_budget = df_sh.loc[mask_top, 'Оптимальний бюджет'].sum()
             df_sh['Сумарна частка бюджету топ-каналів (%)'] = sum_top_budget
+            
             all_results = pd.concat([all_results, df_sh])
 
         st.subheader("📊 Результати оптимізації по СХ")
@@ -131,6 +137,7 @@ if uploaded_file:
             ax.grid(axis='y')
             st.pyplot(fig)
 
+        # --- Експорт у Excel ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             all_results.to_excel(writer, sheet_name='Оптимальний спліт', index=False)
