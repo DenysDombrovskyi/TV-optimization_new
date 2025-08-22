@@ -16,25 +16,35 @@ def validate_excel_file(df_standard):
 
 def heuristic_split(group_df):
     """
-    Евристичний розподіл збереження розміщень:
-    - Стандартні слоти залишаються для всіх каналів.
-    - Неефективні канали зменшуються до мінімальних слотів.
+    Евристичний розподіл:
+    - Всі канали залишаються.
+    - Мінімальна доля для кожного каналу розраховується через відхилення.
+    - Неефективні канали отримують мінімум.
+    - Решта слотів розподіляється пропорційно TRP.
     """
     min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int).to_numpy()
     max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int).to_numpy()
+    std_slots = group_df['Стандартні слоти'].to_numpy(dtype=int)
     
-    slots = group_df['Стандартні слоти'].to_numpy(dtype=int)
+    slots = min_slots.copy()  # Початково всі мінімальні слоти
     trp_values = group_df['TRP'].to_numpy()
     
-    # Визначаємо нижні 25% каналів як неефективні
+    # Визначаємо ефективні канали (верхні 75% по TRP)
     threshold = np.percentile(trp_values, 25)
-    low_eff_idx = np.where(trp_values <= threshold)[0]
+    eff_idx = np.where(trp_values > threshold)[0]
     
-    for idx in low_eff_idx:
-        slots[idx] = min_slots[idx]  # зменшуємо до мінімально допустимого
+    # Загальна кількість слотів
+    total_std = std_slots.sum()
+    allocated = slots.sum()
+    remaining = total_std - allocated
     
-    # Переконуємось, що ніде не перевищено максимум
-    slots = np.minimum(slots, max_slots)
+    # Розподіляємо залишок пропорційно TRP для ефективних каналів
+    if remaining > 0 and len(eff_idx) > 0:
+        eff_trp = trp_values[eff_idx]
+        for _ in range(remaining):
+            idx = eff_idx[np.argmax(eff_trp / (slots[eff_idx] + 1e-6))]
+            if slots[idx] < max_slots[idx]:
+                slots[idx] += 1
     
     return pd.Series(slots, index=group_df.index)
 
