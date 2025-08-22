@@ -271,35 +271,38 @@ if uploaded_file:
                 with tab3:
                     st.markdown("#### Порівняння сплітів за часткою TRP та кількістю слотів")
                     
-                    # Перетворення даних для графіків
+                    # Графік 1: Розподіл частки TRP
+                    fig_trp, ax_trp = plt.subplots(figsize=(12, 6))
+                    labels = all_results['Канал']
                     std_share = (all_results['Стандартний TRP'] / all_results['Стандартний TRP'].sum()) * 100
                     opt_share = (all_results['Оптимальний TRP (масштаб)'] / all_results['Оптимальний TRP (масштаб)'].sum()) * 100
-
-                    # Створення DataFrame для Plotly
-                    plot_df = pd.DataFrame({
-                        'Канал': all_results['Канал'],
-                        'Частка TRP (%)': std_share,
-                        'Спліт': 'Стандартний'
-                    })
-                    plot_df = pd.concat([plot_df, pd.DataFrame({
-                        'Канал': all_results['Канал'],
-                        'Частка TRP (%)': opt_share,
-                        'Спліт': 'Оптимізований'
-                    })])
                     
-                    # Графік частки TRP
-                    fig_trp = px.bar(plot_df, x="Канал", y="Частка TRP (%)", color="Спліт", barmode="group",
-                                     title="Розподіл частки TRP",
-                                     color_discrete_map={'Стандартний': 'gray', 'Оптимізований': 'skyblue'})
-                    st.plotly_chart(fig_trp, use_container_width=True)
-
-                    # Графік кількості слотів
-                    fig_slots = px.bar(all_results, x='Канал', y='Оптимальні слоти (масштаб)',
-                                       title='Кількість слотів в оптимізованому спліті',
-                                       color='СХ',
-                                       color_discrete_sequence=px.colors.qualitative.Pastel)
-                    st.plotly_chart(fig_slots, use_container_width=True)
-
+                    width = 0.35
+                    x = range(len(labels))
+                    ax_trp.bar(x, std_share, width, label='Стандартний спліт', color='gray')
+                    ax_trp.bar([p + width for p in x], opt_share, width, label='Оптимізований спліт', color='skyblue')
+                    
+                    ax_trp.set_title('Розподіл частки TRP (%)')
+                    ax_trp.set_ylabel('Частка (%)')
+                    ax_trp.set_xticks([p + width / 2 for p in x])
+                    ax_trp.set_xticklabels(labels, rotation=45, ha="right")
+                    ax_trp.legend()
+                    ax_trp.grid(axis='y')
+                    plt.tight_layout()
+                    st.pyplot(fig_trp)
+                    
+                    # Графік 2: Кількість слотів
+                    fig_slots, ax_slots = plt.subplots(figsize=(12, 6))
+                    ax_slots.bar(all_results['Канал'], all_results['Оптимальні слоти (масштаб)'], color='skyblue')
+                    
+                    ax_slots.set_title('Кількість слотів в оптимізованому спліті')
+                    ax_slots.set_ylabel('Кількість слотів')
+                    ax_slots.set_xlabel('Канал')
+                    ax_slots.set_xticklabels(all_results['Канал'], rotation=45, ha="right")
+                    ax_slots.grid(axis='y')
+                    plt.tight_layout()
+                    st.pyplot(fig_slots)
+                    
                 # Кнопка для завантаження результатів
                 st.markdown("---")
                 output = io.BytesIO()
