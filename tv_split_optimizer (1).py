@@ -341,12 +341,4 @@ if uploaded_file:
                     # 2. Вартість по СХ
                     display_df_sh_costs.set_index('СХ').to_excel(writer, sheet_name='Вартість по СХ')
 
-                    # 3. Aff по СХ
-                    display_df_sh_aff = pd.DataFrame({
-                        'СХ': sh_results_opt.index,
-                        'Aff (стандарт)': sh_results_std['Стандартний Aff'],
-                        'Aff (оптимізований)': sh_results_opt['Оптимальний Aff (масштаб)']
-                    })
-                    display_df_sh_aff.set_index('СХ').to_excel(writer, sheet_name='Aff по СХ')
-
                 st.download_button("📥 Завантажити результати Excel", data=output.getvalue(), file_name="результати_оптимізації.xlsx")
