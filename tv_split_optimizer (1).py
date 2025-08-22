@@ -269,29 +269,45 @@ if uploaded_file:
                     st.dataframe(display_df_sh_costs.set_index('СХ').fillna(0).applymap(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else x))
 
                 with tab3:
-                    st.markdown("#### Порівняння сплітів за часткою TRP та кількістю слотів")
+                    st.markdown("#### Порівняння сплітів за часткою TRP, загальним TRP та кількістю слотів")
                     
                     # Графік 1: Розподіл частки TRP
-                    fig_trp, ax_trp = plt.subplots(figsize=(12, 6))
+                    fig_trp_share, ax_trp_share = plt.subplots(figsize=(12, 6))
                     labels = all_results['Канал']
                     std_share = (all_results['Стандартний TRP'] / all_results['Стандартний TRP'].sum()) * 100
                     opt_share = (all_results['Оптимальний TRP (масштаб)'] / all_results['Оптимальний TRP (масштаб)'].sum()) * 100
                     
                     width = 0.35
                     x = range(len(labels))
-                    ax_trp.bar(x, std_share, width, label='Стандартний спліт', color='gray')
-                    ax_trp.bar([p + width for p in x], opt_share, width, label='Оптимізований спліт', color='skyblue')
+                    ax_trp_share.bar(x, std_share, width, label='Стандартний спліт', color='gray')
+                    ax_trp_share.bar([p + width for p in x], opt_share, width, label='Оптимізований спліт', color='skyblue')
                     
-                    ax_trp.set_title('Розподіл частки TRP (%)')
-                    ax_trp.set_ylabel('Частка (%)')
-                    ax_trp.set_xticks([p + width / 2 for p in x])
-                    ax_trp.set_xticklabels(labels, rotation=45, ha="right")
-                    ax_trp.legend()
-                    ax_trp.grid(axis='y')
+                    ax_trp_share.set_title('Розподіл частки TRP (%)')
+                    ax_trp_share.set_ylabel('Частка (%)')
+                    ax_trp_share.set_xticks([p + width / 2 for p in x])
+                    ax_trp_share.set_xticklabels(labels, rotation=45, ha="right")
+                    ax_trp_share.legend()
+                    ax_trp_share.grid(axis='y')
                     plt.tight_layout()
-                    st.pyplot(fig_trp)
+                    st.pyplot(fig_trp_share)
                     
-                    # Графік 2: Кількість слотів
+                    # Графік 2: Загальний TRP
+                    fig_trp_abs, ax_trp_abs = plt.subplots(figsize=(12, 6))
+                    width = 0.35
+                    x = range(len(labels))
+                    ax_trp_abs.bar(x, all_results['Стандартний TRP'], width, label='Стандартний спліт', color='gray')
+                    ax_trp_abs.bar([p + width for p in x], all_results['Оптимальний TRP (масштаб)'], width, label='Оптимізований спліт', color='skyblue')
+                    
+                    ax_trp_abs.set_title('Загальний TRP')
+                    ax_trp_abs.set_ylabel('TRP')
+                    ax_trp_abs.set_xticks([p + width / 2 for p in x])
+                    ax_trp_abs.set_xticklabels(labels, rotation=45, ha="right")
+                    ax_trp_abs.legend()
+                    ax_trp_abs.grid(axis='y')
+                    plt.tight_layout()
+                    st.pyplot(fig_trp_abs)
+
+                    # Графік 3: Кількість слотів
                     fig_slots, ax_slots = plt.subplots(figsize=(12, 6))
                     ax_slots.bar(all_results['Канал'], all_results['Оптимальні слоти (масштаб)'], color='skyblue')
                     
@@ -311,17 +327,17 @@ if uploaded_file:
                     # 1. Спліт (Стандартний та Оптимізований)
                     excel_df = all_results[['Канал', 'СХ', 
                                             'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 'Стандартний бюджет',
-                                            'Оптимальні слоти (масштаб)', 'Оптимальний TRP (масштаб)', 'Оптимальний Aff', 'Оптимальний бюджет (масштаб)']].copy()
+                                            'Оптимальні слоти', 'Оптимальний TRP', 'Оптимальний Aff', 'Оптимальний бюджет']].copy()
                     
                     total_row = pd.DataFrame([['Загалом', '-', 
                                             excel_df['Стандартні слоти'].sum(), 
                                             excel_df['Стандартний TRP'].sum(), 
                                             excel_df['Стандартний Aff'].sum(), 
                                             excel_df['Стандартний бюджет'].sum(),
-                                            excel_df['Оптимальні слоти (масштаб)'].sum(), 
-                                            excel_df['Оптимальний TRP (масштаб)'].sum(), 
+                                            excel_df['Оптимальні слоти'].sum(), 
+                                            excel_df['Оптимальний TRP'].sum(), 
                                             excel_df['Оптимальний Aff'].sum(), 
-                                            excel_df['Оптимальний бюджет (масштаб)'].sum()]],
+                                            excel_df['Оптимальний бюджет'].sum()]],
                                             columns=excel_df.columns)
                     excel_df = pd.concat([excel_df, total_row], ignore_index=True)
                     excel_df.to_excel(writer, sheet_name='Спліт', index=False)
