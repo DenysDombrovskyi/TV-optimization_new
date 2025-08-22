@@ -35,8 +35,8 @@ def run_optimization(df, total_budget, goal, mode, buying_audiences):
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     
-    # Видаляємо рядки з нульовими значеннями ціни або TRP, щоб уникнути помилок
-    df = df[(df['Ціна'] > 0) & (df['TRP'] > 0)].copy()
+    # Видаляємо рядок, який фільтрував канали з нульовими значеннями
+    # Тепер програма буде обробляти всі канали.
 
     all_results = pd.DataFrame()
 
