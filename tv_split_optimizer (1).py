@@ -258,4 +258,93 @@ if uploaded_file:
                     
                     sh_results_opt['Ціна за Aff'] = sh_results_opt['Оптимальний бюджет'] / sh_results_opt['Оптимальний Aff']
                     sh_results_opt['Ціна за TRP'] = sh_results_opt['Оптимальний бюджет'] / sh_results_opt['Оптимальний TRP']
-                    sh_results_std['Ціна за Aff'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Ста
+                    sh_results_std['Ціна за Aff'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний Aff']
+                    sh_results_std['Ціна за TRP'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний TRP']
+
+                    display_df_sh_costs = pd.DataFrame({
+                        'СХ': sh_results_opt.index,
+                        'Ціна за Aff (стандарт)': sh_results_std['Ціна за Aff'],
+                        'Ціна за TRP (стандарт)': sh_results_std['Ціна за TRP'],
+                        'Ціна за Aff (оптимізований)': sh_results_opt['Ціна за Aff'],
+                        'Ціна за TRP (оптимізований)': sh_results_opt['Ціна за TRP']
+                    })
+                    st.dataframe(display_df_sh_costs.set_index('СХ').fillna(0).applymap(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else x))
+                
+                with tab3:
+                    st.markdown("#### Порівняння сплітів за часткою бюджету, загальним TRP та кількістю слотів")
+                    
+                    # Графік 1: Розподіл частки бюджету
+                    fig_budget_share, ax_budget_share = plt.subplots(figsize=(12, 6))
+                    labels = all_results['Канал']
+                    std_share = (all_results['Стандартний бюджет'] / all_results['Стандартний бюджет'].sum()) * 100
+                    opt_share = (all_results['Оптимальний бюджет'] / all_results['Оптимальний бюджет'].sum()) * 100
+                    
+                    width = 0.35
+                    x = range(len(labels))
+                    ax_budget_share.bar(x, std_share, width, label='Стандартний спліт', color='gray')
+                    ax_budget_share.bar([p + width for p in x], opt_share, width, label='Оптимізований спліт', color='skyblue')
+                    
+                    ax_budget_share.set_title('Розподіл частки бюджету (%)')
+                    ax_budget_share.set_ylabel('Частка (%)')
+                    ax_budget_share.set_xticks([p + width / 2 for p in x])
+                    ax_budget_share.set_xticklabels(labels, rotation=45, ha="right")
+                    ax_budget_share.legend()
+                    ax_budget_share.grid(axis='y')
+                    plt.tight_layout()
+                    st.pyplot(fig_budget_share)
+                    
+                    # Графік 2: Загальний TRP
+                    fig_trp_abs, ax_trp_abs = plt.subplots(figsize=(12, 6))
+                    width = 0.35
+                    x = range(len(labels))
+                    ax_trp_abs.bar(x, all_results['Стандартний TRP'], width, label='Стандартний спліт', color='gray')
+                    ax_trp_abs.bar([p + width for p in x], all_results['Оптимальний TRP'], width, label='Оптимізований спліт', color='skyblue')
+                    
+                    ax_trp_abs.set_title('Загальний TRP')
+                    ax_trp_abs.set_ylabel('TRP')
+                    ax_trp_abs.set_xticks([p + width / 2 for p in x])
+                    ax_trp_abs.set_xticklabels(labels, rotation=45, ha="right")
+                    ax_trp_abs.legend()
+                    ax_trp_abs.grid(axis='y')
+                    plt.tight_layout()
+                    st.pyplot(fig_trp_abs)
+
+                    # Графік 3: Кількість слотів
+                    fig_slots, ax_slots = plt.subplots(figsize=(12, 6))
+                    ax_slots.bar(all_results['Канал'], all_results['Оптимальні слоти'], color='skyblue')
+                    
+                    ax_slots.set_title('Кількість слотів в оптимізованому спліті')
+                    ax_slots.set_ylabel('Кількість слотів')
+                    ax_slots.set_xlabel('Канал')
+                    ax_slots.set_xticklabels(all_results['Канал'], rotation=45, ha="right")
+                    ax_slots.grid(axis='y')
+                    plt.tight_layout()
+                    st.pyplot(fig_slots)
+                    
+                # Кнопка для завантаження результатів
+                st.markdown("---")
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    
+                    # 1. Спліт (Стандартний та Оптимізований)
+                    excel_df = all_results[['Канал', 'СХ', 
+                                            'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 'Стандартний бюджет',
+                                            'Оптимальні слоти', 'Оптимальний TRP', 'Оптимальний Aff', 'Оптимальний бюджет']].copy()
+                    
+                    total_row = pd.DataFrame([['Загалом', '-', 
+                                            excel_df['Стандартні слоти'].sum(), 
+                                            excel_df['Стандартний TRP'].sum(), 
+                                            excel_df['Стандартний Aff'].sum(), 
+                                            excel_df['Стандартний бюджет'].sum(),
+                                            excel_df['Оптимальні слоти'].sum(), 
+                                            excel_df['Оптимальний TRP'].sum(), 
+                                            excel_df['Оптимальний Aff'].sum(), 
+                                            excel_df['Оптимальний бюджет'].sum()]],
+                                            columns=excel_df.columns)
+                    excel_df = pd.concat([excel_df, total_row], ignore_index=True)
+                    excel_df.to_excel(writer, sheet_name='Спліт', index=False)
+
+                    # 2. Вартість по СХ
+                    display_df_sh_costs.set_index('СХ').to_excel(writer, sheet_name='Вартість по СХ')
+
+                st.download_button("📥 Завантажити результати Excel", data=output.getvalue(), file_name="результати_оптимізації.xlsx")
