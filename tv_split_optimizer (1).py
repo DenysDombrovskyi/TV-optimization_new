@@ -16,24 +16,20 @@ def validate_excel_file(df_standard):
 
 def heuristic_split(group_df):
     """
-    Евристичний розподіл слотів для всіх каналів, з дотриманням мін/макс відхилень.
+    Евристичний розподіл слотів для всіх каналів з дотриманням мін/макс відхилень.
     """
-    # Мін/макс слоти
     min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int)
     max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int)
     
     total_slots = group_df['Стандартні слоти'].sum()
-    # Початковий розподіл пропорційно TRP
     slots = np.round(group_df['TRP'] / group_df['TRP'].sum() * total_slots).astype(int)
+    slots = np.array(slots)
     
-    # Коригуємо, щоб всі слоти були в межах min/max
     slots = np.clip(slots, min_slots, max_slots)
     
-    # Перерозподіл залишку
     diff = total_slots - slots.sum()
     while diff != 0:
         if diff > 0:
-            # додаємо 1 слот каналу з найвищою ефективністю і можливістю збільшення
             candidates = (slots < max_slots)
             candidate_idx = np.where(candidates)[0]
             if len(candidate_idx) == 0:
@@ -42,7 +38,6 @@ def heuristic_split(group_df):
             slots[eff_idx] += 1
             diff -= 1
         else:
-            # забираємо 1 слот каналу з найменшою ефективністю і можливістю зменшення
             candidates = (slots > min_slots)
             candidate_idx = np.where(candidates)[0]
             if len(candidate_idx) == 0:
@@ -50,7 +45,8 @@ def heuristic_split(group_df):
             eff_idx = candidate_idx[np.argmin(group_df['TRP'].values[candidate_idx])]
             slots[eff_idx] -= 1
             diff += 1
-    return slots
+    
+    return pd.Series(slots, index=group_df.index)
 
 def run_heuristic_optimization(df, goal, buying_audiences, deviation_df):
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
