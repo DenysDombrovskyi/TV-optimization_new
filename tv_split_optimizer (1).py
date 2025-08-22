@@ -52,21 +52,25 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
                 
                 group_df['Стандартна доля TRP'] = group_df['Стандартний TRP'] / group_standard_trp
                 
-                # Використовуємо задані користувачем відхилення
-                group_df['Нижня межа TRP'] = group_df['Стандартна доля TRP'] * (1 - group_df['Мінімальне відхилення'] / 100)
-                group_df['Верхня межа TRP'] = group_df['Стандартна доля TRP'] * (1 + group_df['Максимальне відхилення'] / 100)
-                
                 # Завдання для linprog
-                c = -group_df[goal].values
+                c = group_df['Ціна'].values # Мета - мінімізувати вартість
+
+                # Обмеження на частку TRP по кожному каналу
                 A_upper = pd.get_dummies(group_df['Канал']).mul(group_df['TRP'], axis=0).values
-                b_upper = group_df['Верхня межа TRP'].values * group_standard_trp
-                b_lower = group_df['Нижня межа TRP'].values * group_standard_trp
+                b_upper = (1 + group_df['Максимальне відхилення'] / 100) * group_df['Стандартний TRP']
                 
-                A_lower = -A_upper
-                b_lower = -b_lower
-                
+                A_lower = -pd.get_dummies(group_df['Канал']).mul(group_df['TRP'], axis=0).values
+                b_lower = -(1 - group_df['Мінімальне відхилення'] / 100) * group_df['Стандартний TRP']
+
                 A = list(A_upper) + list(A_lower)
                 b = list(b_upper) + list(b_lower)
+
+                # Додаємо нове обмеження: загальний рейтинг (TRP або Aff) має бути не менше стандартного
+                A_ub_goal = [-group_df[goal].values]
+                b_ub_goal = [-group_df[f'Стандартний {goal}'].sum()]
+
+                A.extend(A_ub_goal)
+                b.extend(b_ub_goal)
                 
                 # Кожен канал повинен мати хоча б 1 слот
                 bounds = [(1, None) for _ in range(len(group_df))]
@@ -85,23 +89,26 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
     else:  # mode == 'total'
         with st.spinner('Проводимо загальну оптимізацію...'):
             total_standard_trp = df['Стандартний TRP'].sum()
-            df['Стандартна доля TRP'] = df['Стандартний TRP'] / total_standard_trp
             
-            # Використовуємо задані користувачем відхилення
-            df['Нижня межа TRP'] = df['Стандартна доля TRP'] * (1 - df['Мінімальне відхилення'] / 100)
-            df['Верхня межа TRP'] = df['Стандартна доля TRP'] * (1 + df['Максимальне відхилення'] / 100)
-
             # Завдання для linprog
-            c = -df[goal].values
+            c = df['Ціна'].values # Мета - мінімізувати вартість
+
+            # Обмеження на частку TRP по кожному каналу
             A_upper = pd.get_dummies(df['Канал']).mul(df['TRP'], axis=0).values
-            b_upper = df['Верхня межа TRP'].values * total_standard_trp
-            b_lower = df['Нижня межа TRP'].values * total_standard_trp
+            b_upper = (1 + df['Максимальне відхилення'] / 100) * df['Стандартний TRP']
             
-            A_lower = -A_upper
-            b_lower = -b_lower
+            A_lower = -pd.get_dummies(df['Канал']).mul(df['TRP'], axis=0).values
+            b_lower = -(1 - df['Мінімальне відхилення'] / 100) * df['Стандартний TRP']
 
             A = list(A_upper) + list(A_lower)
             b = list(b_upper) + list(b_lower)
+            
+            # Додаємо нове обмеження: загальний рейтинг (TRP або Aff) має бути не менше стандартного
+            A_ub_goal = [-df[goal].values]
+            b_ub_goal = [-df[f'Стандартний {goal}'].sum()]
+
+            A.extend(A_ub_goal)
+            b.extend(b_ub_goal)
 
             bounds = [(1, None) for _ in range(len(df))]
             result = linprog(c, A_ub=A, b_ub=b, bounds=bounds)
@@ -123,9 +130,6 @@ st.set_page_config(page_title="Оптимізація ТВ спліта", layout
 st.title("📺 Оптимізація ТВ спліта | Dentsu X")
 
 uploaded_file = st.file_uploader("Завантажте Excel-файл з даними", type=["xlsx"])
-
-# Умовний бюджет для порівняльних розрахунків
-total_budget_assumption = 1_000_000
 
 if uploaded_file:
     try:
@@ -150,7 +154,6 @@ if uploaded_file:
         all_ba = [col.replace('Ціна_', '') for col in all_data.columns if 'Ціна_' in col]
         
         st.header("🔧 Налаштування оптимізації")
-        st.info(f"Для порівняння фінансових показників програма використовує умовний бюджет **{total_budget_assumption:,} грн**.")
         goal = st.selectbox("Мета оптимізації", ['Aff', 'TRP'])
         mode = st.selectbox("Режим оптимізації", ['total', 'per_sh'])
         
@@ -184,33 +187,20 @@ if uploaded_file:
                 all_results['Оптимальний бюджет'] = all_results['Оптимальні слоти'] * all_results['Ціна']
                 all_results['Стандартний бюджет'] = all_results['Стандартні слоти'] * all_results['Ціна']
                 
-                # Розрахунок показників для порівняння, використовуючи умовний бюджет
-                total_budget_opt_raw = all_results['Оптимальний бюджет'].sum()
+                # Розрахунок показників для порівняння
+                total_budget_opt = all_results['Оптимальний бюджет'].sum()
                 total_budget_std = all_results['Стандартний бюджет'].sum()
                 
-                # Масштабування, щоб загальний бюджет дорівнював умовному
-                if total_budget_opt_raw > 0:
-                    scale_factor = total_budget_assumption / total_budget_opt_raw
-                    all_results['Оптимальні слоти (масштаб)'] = (all_results['Оптимальні слоти'] * scale_factor).round(0).astype(int)
-                    all_results['Оптимальний TRP (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['TRP']
-                    all_results['Оптимальний Aff (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['Aff']
-                    all_results['Оптимальний бюджет (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['Ціна']
-                    
-                    total_trp_opt_scaled = all_results['Оптимальний TRP (масштаб)'].sum()
-                    total_aff_opt_scaled = all_results['Оптимальний Aff (масштаб)'].sum()
-                    
-                    # Розрахунок Ціни за Aff (оптимізований)
-                    cpt_opt = total_budget_assumption / total_aff_opt_scaled if total_aff_opt_scaled > 0 else 0
-                else:
-                    st.error("Не вдалося розрахувати масштабовані дані. Загальний оптимальний бюджет дорівнює 0.")
-                    st.stop()
+                total_trp_opt = all_results['Оптимальний TRP'].sum()
+                total_aff_opt = all_results['Оптимальний Aff'].sum()
                 
-                # Розрахунок вартості за рейтинг для загального спліта
                 total_trp_std = all_results['Стандартний TRP'].sum()
                 total_aff_std = all_results['Стандартний Aff'].sum()
                 
-                cpp_opt = total_budget_assumption / total_trp_opt_scaled if total_trp_opt_scaled > 0 else 0
+                # Розрахунок вартості за рейтинг для загального спліта
+                cpp_opt = total_budget_opt / total_trp_opt if total_trp_opt > 0 else 0
                 cpp_std = total_budget_std / total_trp_std if total_trp_std > 0 else 0
+                cpt_opt = total_budget_opt / total_aff_opt if total_aff_opt > 0 else 0
                 cpt_std = total_budget_std / total_aff_std if total_aff_std > 0 else 0
                 
                 # Порівняння результатів
@@ -222,31 +212,33 @@ if uploaded_file:
                 tab1, tab2, tab3 = st.tabs(["Загальні показники", "Деталі по СХ", "Графіки"])
 
                 with tab1:
-                    st.markdown("#### Загальна вартість за рейтинг (на основі умовного бюджету)")
+                    st.markdown("#### Загальна вартість за рейтинг")
                     col1, col2 = st.columns(2)
                     with col1:
                         st.info("**Стандартний спліт**")
                         st.metric("Ціна за Aff", f"{cpt_std:,.2f} грн")
                         st.metric("Ціна за TRP", f"{cpp_std:,.2f} грн")
+                        st.metric("Загальний бюджет", f"{total_budget_std:,.2f} грн")
                     with col2:
                         st.success("**Оптимізований спліт**")
                         st.metric("Ціна за Aff", f"{cpt_opt:,.2f} грн")
                         st.metric("Ціна за TRP", f"{cpp_opt:,.2f} грн")
+                        st.metric("Загальний бюджет", f"{total_budget_opt:,.2f} грн")
 
                     st.markdown("---")
                     st.markdown("#### Деталі спліта по каналах")
                     display_df_channels = all_results[['Канал', 'СХ', 
                                                        'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 
-                                                       'Оптимальні слоти (масштаб)', 'Оптимальний TRP (масштаб)', 'Оптимальний Aff (масштаб)']].copy()
+                                                       'Оптимальні слоти', 'Оптимальний TRP', 'Оптимальний Aff']].copy()
                     st.dataframe(display_df_channels.set_index('Канал'))
                 
                 with tab2:
                     st.markdown("#### Розподіл вартості по СХ")
                     
                     sh_results_opt = all_results.groupby('СХ').agg(
-                        {'Оптимальний бюджет (масштаб)': 'sum',
-                         'Оптимальний TRP (масштаб)': 'sum',
-                         'Оптимальний Aff (масштаб)': 'sum'}
+                        {'Оптимальний бюджет': 'sum',
+                         'Оптимальний TRP': 'sum',
+                         'Оптимальний Aff': 'sum'}
                     )
                     sh_results_std = all_results.groupby('СХ').agg(
                         {'Стандартний бюджет': 'sum',
@@ -254,8 +246,8 @@ if uploaded_file:
                          'Стандартний Aff': 'sum'}
                     )
                     
-                    sh_results_opt['Ціна за Aff'] = sh_results_opt['Оптимальний бюджет (масштаб)'] / sh_results_opt['Оптимальний Aff (масштаб)']
-                    sh_results_opt['Ціна за TRP'] = sh_results_opt['Оптимальний бюджет (масштаб)'] / sh_results_opt['Оптимальний TRP (масштаб)']
+                    sh_results_opt['Ціна за Aff'] = sh_results_opt['Оптимальний бюджет'] / sh_results_opt['Оптимальний Aff']
+                    sh_results_opt['Ціна за TRP'] = sh_results_opt['Оптимальний бюджет'] / sh_results_opt['Оптимальний TRP']
                     sh_results_std['Ціна за Aff'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний Aff']
                     sh_results_std['Ціна за TRP'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний TRP']
 
@@ -275,7 +267,7 @@ if uploaded_file:
                     fig_budget_share, ax_budget_share = plt.subplots(figsize=(12, 6))
                     labels = all_results['Канал']
                     std_share = (all_results['Стандартний бюджет'] / all_results['Стандартний бюджет'].sum()) * 100
-                    opt_share = (all_results['Оптимальний бюджет (масштаб)'] / all_results['Оптимальний бюджет (масштаб)'].sum()) * 100
+                    opt_share = (all_results['Оптимальний бюджет'] / all_results['Оптимальний бюджет'].sum()) * 100
                     
                     width = 0.35
                     x = range(len(labels))
@@ -296,7 +288,7 @@ if uploaded_file:
                     width = 0.35
                     x = range(len(labels))
                     ax_trp_abs.bar(x, all_results['Стандартний TRP'], width, label='Стандартний спліт', color='gray')
-                    ax_trp_abs.bar([p + width for p in x], all_results['Оптимальний TRP (масштаб)'], width, label='Оптимізований спліт', color='skyblue')
+                    ax_trp_abs.bar([p + width for p in x], all_results['Оптимальний TRP'], width, label='Оптимізований спліт', color='skyblue')
                     
                     ax_trp_abs.set_title('Загальний TRP')
                     ax_trp_abs.set_ylabel('TRP')
@@ -309,7 +301,7 @@ if uploaded_file:
 
                     # Графік 3: Кількість слотів
                     fig_slots, ax_slots = plt.subplots(figsize=(12, 6))
-                    ax_slots.bar(all_results['Канал'], all_results['Оптимальні слоти (масштаб)'], color='skyblue')
+                    ax_slots.bar(all_results['Канал'], all_results['Оптимальні слоти'], color='skyblue')
                     
                     ax_slots.set_title('Кількість слотів в оптимізованому спліті')
                     ax_slots.set_ylabel('Кількість слотів')
