@@ -26,7 +26,7 @@ def validate_excel_file(df_standard, df_aff):
     
     return True
 
-def run_optimization(df, total_budget, goal, mode, buying_audiences, channels_20_percent):
+def run_optimization(df, total_budget, goal, mode, buying_audiences):
     """
     Виконує оптимізацію ТВ-спліта на основі даних і налаштувань.
     Повертає датафрейм з результатами оптимізації.
@@ -53,8 +53,8 @@ def run_optimization(df, total_budget, goal, mode, buying_audiences, channels_20
                 group_df['Стандартний бюджет'] = group_df['TRP'] * group_df['Ціна']
                 group_df['Доля по бюджету (%)'] = (group_df['Стандартний бюджет'] / group_df['Стандартний бюджет'].sum()) * 100
                 
-                # Оновлена логіка відхилень
-                group_df['Відхилення'] = group_df['Канал'].apply(lambda x: 0.2 if x in channels_20_percent else 0.3)
+                # Логіка відхилень на основі частки бюджету
+                group_df['Відхилення'] = group_df['Доля по бюджету (%)'].apply(lambda x: 0.2 if x >= 10 else 0.3)
                 
                 group_df['Нижня межа'] = group_df['Стандартний бюджет'] * (1 - group_df['Відхилення'])
                 group_df['Верхня межа'] = group_df['Стандартний бюджет'] * (1 + group_df['Відхилення'])
@@ -86,8 +86,8 @@ def run_optimization(df, total_budget, goal, mode, buying_audiences, channels_20
             total_standard_budget = df['Стандартний бюджет'].sum()
             df['Доля по бюджету (%)'] = (df['Стандартний бюджет'] / total_standard_budget) * 100
             
-            # Оновлена логіка відхилень
-            df['Відхилення'] = df['Канал'].apply(lambda x: 0.2 if x in channels_20_percent else 0.3)
+            # Логіка відхилень на основі частки бюджету
+            df['Відхилення'] = df['Доля по бюджету (%)'].apply(lambda x: 0.2 if x >= 10 else 0.3)
             
             df['Нижня межа'] = df['Стандартний бюджет'] * (1 - df['Відхилення'])
             df['Верхня межа'] = df['Стандартний бюджет'] * (1 + df['Відхилення'])
@@ -119,9 +119,6 @@ def run_optimization(df, total_budget, goal, mode, buying_audiences, channels_20
 
 st.set_page_config(page_title="Оптимізація ТВ спліта", layout="wide")
 st.title("📺 Оптимізація ТВ спліта | Dentsu X")
-
-# Список каналів з відхиленням +/- 20%
-channels_20_percent = ['Новий канал', 'ICTV2', 'СТБ', '1+1 Україна', 'TET', '2+2', 'НТН']
 
 uploaded_file = st.file_uploader("Завантажте Excel-файл з даними", type=["xlsx"])
 
@@ -162,7 +159,7 @@ if uploaded_file:
             buying_audiences[sh] = ba
 
         if st.button("🚀 Запустити оптимізацію"):
-            all_results = run_optimization(all_data.copy(), total_budget, goal, mode, buying_audiences, channels_20_percent)
+            all_results = run_optimization(all_data.copy(), total_budget, goal, mode, buying_audiences)
             
             if not all_results.empty:
                 # Розрахунок підсумкових даних
