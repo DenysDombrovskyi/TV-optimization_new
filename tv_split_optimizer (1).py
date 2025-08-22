@@ -14,16 +14,21 @@ def validate_excel_file(df_standard):
             return False
     return True
 
-def heuristic_split_percent(group_df):
+def heuristic_split_percent_with_limits(group_df):
     """
-    Евристичний спліт у відсотках:
-    - мінімальна частка = мінімальне відхилення,
-    - залишок розподіляється від найдешевшого каналу до дорожчого,
-    - всі канали присутні, сума = 100%.
+    Евристичний спліт у відсотках з обмеженням на мін/макс відхилення:
+    1. Розраховує мінімальні і максимальні долі по СХ: Стандартна доля +/- відхилення
+    2. В межах цих долей розподіляє залишок від найдешевшого каналу до дорожчого
+    3. Всі канали присутні, сума = 100%
     """
-    # Мінімальні та максимальні частки
-    min_share = group_df['Мінімальне відхилення'].to_numpy()
-    max_share = group_df['Максимальне відхилення'].to_numpy()
+    # Стандартні долі
+    standard_trp = group_df['TRP'].to_numpy()
+    total_trp = standard_trp.sum()
+    standard_share = (standard_trp / total_trp) * 100 if total_trp > 0 else np.zeros_like(standard_trp)
+    
+    # Мін/макс на основі відхилень
+    min_share = np.maximum(standard_share - group_df['Мінімальне відхилення'].to_numpy(), 0)
+    max_share = np.minimum(standard_share + group_df['Максимальне відхилення'].to_numpy(), 100)
     
     # Початковий спліт = мінімальні частки
     shares = min_share.copy()
@@ -37,7 +42,7 @@ def heuristic_split_percent(group_df):
     # Сортуємо від найдешевшого до дорожчого
     sorted_idx = np.argsort(cost_per_trp)
     
-    # Розподіл залишку
+    # Розподіл залишку в межах максимуму
     while remaining > 0:
         for idx in sorted_idx:
             add = min(max_share[idx] - shares[idx], remaining)
@@ -61,7 +66,7 @@ def run_heuristic_optimization(df, buying_audiences, deviation_df):
     all_results = pd.DataFrame()
     
     for sh, group_df in df.groupby('СХ'):
-        shares = heuristic_split_percent(group_df)
+        shares = heuristic_split_percent_with_limits(group_df)
         group_df['Оптимальна частка (%)'] = shares
         group_df['Оптимальний бюджет'] = shares/100 * (group_df['Ціна']*group_df['TRP']).sum()
         all_results = pd.concat([all_results, group_df])
@@ -71,7 +76,7 @@ def run_heuristic_optimization(df, buying_audiences, deviation_df):
 # --- Streamlit інтерфейс ---
 
 st.set_page_config(page_title="Оптимізація ТВ спліта", layout="wide")
-st.title("📺 Евристична оптимізація ТВ спліта | Dentsu X")
+st.title("📺 Евристична оптимізація ТВ спліта з обмеженнями | Dentsu X")
 
 uploaded_file = st.file_uploader("Завантажте Excel-файл з даними", type=["xlsx"])
 
