@@ -3,7 +3,6 @@ import pandas as pd
 from scipy.optimize import linprog
 import matplotlib.pyplot as plt
 import io
-import plotly.express as px
 
 # --- Функції для валідації та оптимізації ---
 
