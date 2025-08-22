@@ -35,21 +35,21 @@ uploaded_file = st.file_uploader("Завантажте Excel-файл з дан�
 
 if uploaded_file:
     try:
-        # Основний лист і лист з Affinity
-        df_main = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
-        df_affinity = pd.read_excel(uploaded_file, sheet_name="Affinity", engine="openpyxl")
+        # Один лист із усіма даними
+        df = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
         
         st.subheader("📌 Вибір колонок для аналізу")
-        channel_col = st.selectbox("Оберіть колонку з назвами каналів", df_main.columns)
-        sx_col = st.selectbox("Оберіть колонку з назвами СХ", df_main.columns)
-        df_main.rename(columns={channel_col: 'Канал', sx_col: 'СХ'}, inplace=True)
+        channel_col = st.selectbox("Оберіть колонку з назвами каналів", df.columns)
+        sx_col = st.selectbox("Оберіть колонку з назвами СХ", df.columns)
+        df.rename(columns={channel_col: 'Канал', sx_col: 'СХ'}, inplace=True)
+
+        # Перевірка на наявність колонки Affinity
+        if 'Affinity' not in df.columns:
+            st.error("❌ В Excel-файлі відсутній стовпчик 'Affinity'.")
+            st.stop()
 
         st.success("✅ Дані успішно завантажено та колонки обрано!")
 
-        # З'єднуємо по Каналу
-        df = df_main.merge(df_affinity, on='Канал', how='left')
-        df['Affinity'].fillna(1.0, inplace=True)  # якщо немає Affinity, ставимо 1.0
-        
     except Exception as e:
         st.error(f"❌ Помилка при завантаженні файлу: {e}")
         st.stop()
