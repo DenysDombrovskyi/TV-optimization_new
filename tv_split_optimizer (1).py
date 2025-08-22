@@ -16,35 +16,37 @@ def validate_excel_file(df_standard):
 
 def heuristic_split(group_df):
     """
-    Евристичний розподіл слотів для всіх каналів з дотриманням мін/макс відхилень.
+    Евристичний розподіл слотів для всіх каналів.
+    Всі канали отримують слоти в рамках допустимих відхилень.
     """
+    total_slots = group_df['Стандартні слоти'].sum()
     min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int).to_numpy()
     max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int).to_numpy()
     
-    total_slots = group_df['Стандартні слоти'].sum()
-    slots = np.round(group_df['TRP'] / group_df['TRP'].sum() * total_slots).astype(int)
-    slots = np.array(slots)  # NumPy масив для змін
+    # 1. Встановлюємо мінімальні слоти всім каналам
+    slots = np.array(min_slots, dtype=int)
+    remaining_slots = total_slots - slots.sum()
     
-    slots = np.clip(slots, min_slots, max_slots)
-    
-    diff = total_slots - slots.sum()
     trp_values = group_df['TRP'].to_numpy()
     
-    while diff != 0:
-        if diff > 0:
-            candidates = np.where(slots < max_slots)[0]
-            if len(candidates) == 0:
-                break
-            eff_idx = candidates[np.argmax(trp_values[candidates])]
-            slots[eff_idx] += 1
-            diff -= 1
-        else:
-            candidates = np.where(slots > min_slots)[0]
-            if len(candidates) == 0:
-                break
-            eff_idx = candidates[np.argmin(trp_values[candidates])]
-            slots[eff_idx] -= 1
-            diff += 1
+    # 2. Додаємо залишок слотів пропорційно TRP
+    while remaining_slots > 0:
+        candidates = np.where(slots < max_slots)[0]
+        if len(candidates) == 0:
+            break
+        eff_idx = candidates[np.argmax(trp_values[candidates])]
+        slots[eff_idx] += 1
+        remaining_slots -= 1
+    
+    # 3. Якщо перевищили стандартні слоти (через округлення), віднімаємо слоти від найменш ефективних
+    over_slots = slots.sum() - total_slots
+    while over_slots > 0:
+        candidates = np.where(slots > min_slots)[0]
+        if len(candidates) == 0:
+            break
+        eff_idx = candidates[np.argmin(trp_values[candidates])]
+        slots[eff_idx] -= 1
+        over_slots -= 1
     
     return pd.Series(slots, index=group_df.index)
 
