@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 # --- Функції ---
 def validate_excel_file(df_standard):
-    required_cols_standard = ['Канал', 'СХ', 'Бюджет (%)']
+    required_cols_standard = ['Канал', 'СХ']
     for col in required_cols_standard:
         if col not in df_standard.columns:
             st.error(f"❌ В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
@@ -43,6 +43,7 @@ uploaded_file = st.file_uploader("Завантажте Excel-файл з дан�
 
 if uploaded_file:
     try:
+        # Основний лист і лист з Affinity
         df_main = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
         df_affinity = pd.read_excel(uploaded_file, sheet_name="Affinity", engine="openpyxl")
         
@@ -50,7 +51,7 @@ if uploaded_file:
             st.stop()
         st.success("✅ Дані успішно завантажено!")
         
-        # З'єднуємо основний лист із Affinity по Каналу
+        # З'єднуємо по Каналу
         df = df_main.merge(df_affinity, on='Канал', how='left')
         df['Affinity'].fillna(1.0, inplace=True)  # якщо немає Affinity, ставимо 1.0
         
@@ -91,11 +92,12 @@ if uploaded_file:
 
     # Підготовка базових колонок бюджету і ціни
     df['Бюджет_оптимальний'] = df.apply(
-        lambda row: row.get(f'Бюджет_{buying_audiences.get(row["СХ"], "")}', row['Бюджет (%)']),
+        lambda row: row.get(f'Бюджет_{buying_audiences.get(row["СХ"], "")}', 
+                            row.get('Бюджет (%)', 1.0)),  # дефолт 1.0
         axis=1
     )
     df['Ціна_оптимальна'] = df.apply(
-        lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 1.0),
+        lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 1.0),  # дефолт 1.0
         axis=1
     )
 
