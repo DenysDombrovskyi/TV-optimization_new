@@ -201,18 +201,14 @@ if uploaded_file:
                     all_results['Оптимальний бюджет (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['Ціна']
                     
                     total_trp_opt_scaled = all_results['Оптимальний TRP (масштаб)'].sum()
-                    total_aff_opt_scaled = all_results['Оптимальний Aff (масштаб)'].sum()
                 else:
                     st.error("Не вдалося розрахувати масштабовані дані. Загальний оптимальний бюджет дорівнює 0.")
                     st.stop()
                 
                 # Розрахунок вартості за рейтинг для загального спліта
                 total_trp_std = all_results['Стандартний TRP'].sum()
-                total_aff_std = all_results['Стандартний Aff'].sum()
                 
-                cpt_opt = total_budget_assumption / total_aff_opt_scaled if total_aff_opt_scaled > 0 else 0
                 cpp_opt = total_budget_assumption / total_trp_opt_scaled if total_trp_opt_scaled > 0 else 0
-                cpt_std = total_budget_std / total_aff_std if total_aff_std > 0 else 0
                 cpp_std = total_budget_std / total_trp_std if total_trp_std > 0 else 0
 
                 st.subheader("📊 Результати оптимізації")
@@ -221,11 +217,9 @@ if uploaded_file:
                 col1, col2 = st.columns(2)
                 with col1:
                     st.info("**Стандартний спліт**")
-                    st.metric("Ціна за Aff", f"{cpt_std:,.2f} грн")
                     st.metric("Ціна за TRP", f"{cpp_std:,.2f} грн")
                 with col2:
                     st.success("**Оптимізований спліт**")
-                    st.metric("Ціна за Aff", f"{cpt_opt:,.2f} грн")
                     st.metric("Ціна за TRP", f"{cpp_opt:,.2f} грн")
                 
                 st.markdown("---")
@@ -233,25 +227,19 @@ if uploaded_file:
                 
                 sh_results_opt = all_results.groupby('СХ').agg(
                     {'Оптимальний бюджет (масштаб)': 'sum',
-                     'Оптимальний TRP (масштаб)': 'sum',
-                     'Оптимальний Aff (масштаб)': 'sum'}
+                     'Оптимальний TRP (масштаб)': 'sum'}
                 )
                 sh_results_std = all_results.groupby('СХ').agg(
                     {'Стандартний бюджет': 'sum',
-                     'Стандартний TRP': 'sum',
-                     'Стандартний Aff': 'sum'}
+                     'Стандартний TRP': 'sum'}
                 )
                 
-                sh_results_opt['Ціна за Aff'] = sh_results_opt['Оптимальний бюджет (масштаб)'] / sh_results_opt['Оптимальний Aff (масштаб)']
                 sh_results_opt['Ціна за TRP'] = sh_results_opt['Оптимальний бюджет (масштаб)'] / sh_results_opt['Оптимальний TRP (масштаб)']
-                sh_results_std['Ціна за Aff'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний Aff']
                 sh_results_std['Ціна за TRP'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний TRP']
 
                 display_df_sh = pd.DataFrame({
                     'СХ': sh_results_opt.index,
-                    'Ціна за Aff (стандарт)': sh_results_std['Ціна за Aff'],
                     'Ціна за TRP (стандарт)': sh_results_std['Ціна за TRP'],
-                    'Ціна за Aff (оптимізований)': sh_results_opt['Ціна за Aff'],
                     'Ціна за TRP (оптимізований)': sh_results_opt['Ціна за TRP']
                 })
                 st.dataframe(display_df_sh.set_index('СХ').fillna(0).applymap(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else x))
