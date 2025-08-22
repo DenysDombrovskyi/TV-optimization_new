@@ -16,16 +16,16 @@ def validate_excel_file(df_standard):
 
 def heuristic_split_percent_with_limits(group_df):
     """
-    Евристичний спліт у відсотках з обмеженням на мін/макс відхилення.
+    Евристичний спліт у відсотках з обмеженням на мін/макс відхилення у відсотках від стандартного спліту.
     Всі канали залишаються в спліті.
     """
     standard_trp = group_df['TRP'].to_numpy()
     total_trp = standard_trp.sum()
     standard_share = (standard_trp / total_trp) * 100 if total_trp > 0 else np.zeros_like(standard_trp)
 
-    # Мін/макс на основі відхилень
-    min_share = np.maximum(standard_share - group_df['Мінімальне відхилення'].to_numpy(), 0)
-    max_share = np.minimum(standard_share + group_df['Максимальне відхилення'].to_numpy(), 100)
+    # Мін/макс частка з урахуванням відсотків
+    min_share = standard_share * (1 - group_df['Мінімальне відхилення'].to_numpy()/100)
+    max_share = standard_share * (1 + group_df['Максимальне відхилення'].to_numpy()/100)
 
     # Початковий спліт = мінімальні частки
     shares = min_share.copy()
@@ -51,31 +51,32 @@ def heuristic_split_percent_with_limits(group_df):
             if remaining <= 0:
                 break
         if not updated:
-            # Якщо більше не можна додати до жодного каналу — розподіляємо залишок пропорційно
             shares += remaining / len(shares)
             remaining = 0
 
     # Перевірка: сума точно 100%
     shares = shares / shares.sum() * 100
-
     return pd.Series(shares, index=group_df.index)
 
 def run_heuristic_optimization(df, buying_audiences, deviation_df):
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
 
-    # Об'єднання з deviation_df
     df = df.merge(deviation_df, on='Канал', how='left').fillna(0)
-
     all_results = pd.DataFrame()
 
     for sh, group_df in df.groupby('СХ'):
         shares = heuristic_split_percent_with_limits(group_df)
+
+        # Жорстка перевірка: всі канали в спліті
+        min_allowed = group_df['TRP'] * 0.01  # мінімальна частка для каналу (1% TRP)
+        shares = np.maximum(shares, min_allowed)
+        shares = shares / shares.sum() * 100  # нормалізація до 100%
+        
         group_df['Оптимальна частка (%)'] = shares
         group_df['Оптимальний бюджет'] = shares/100 * (group_df['Ціна']*group_df['TRP']).sum()
         all_results = pd.concat([all_results, group_df])
 
-        # --- Додаткова перевірка ---
         total_share = group_df['Оптимальна частка (%)'].sum()
         if not np.isclose(total_share, 100):
             st.warning(f"⚠️ Сума часток для СХ {sh} не дорівнює 100% ({total_share:.2f}%). Автоматично нормалізовано.")
@@ -83,10 +84,18 @@ def run_heuristic_optimization(df, buying_audiences, deviation_df):
 
     return all_results
 
+def highlight_cost(val, costs):
+    if val == costs.min():
+        return 'background-color: lightgreen'
+    elif val == costs.max():
+        return 'background-color: salmon'
+    else:
+        return ''
+
 # --- Streamlit інтерфейс ---
 
 st.set_page_config(page_title="Оптимізація ТВ спліта", layout="wide")
-st.title("📺 Евристична оптимізація ТВ спліта з обмеженнями | Dentsu X")
+st.title("📺 Евристична оптимізація ТВ спліта | Dentsu X")
 
 uploaded_file = st.file_uploader("Завантажте Excel-файл з даними", type=["xlsx"])
 
@@ -104,7 +113,6 @@ if uploaded_file:
     all_ba = [col.replace('Ціна_', '') for col in df.columns if 'Ціна_' in col]
     
     st.header("🔧 Налаштування оптимізації")
-    
     st.subheader("🎯 Вибір БА для кожного СХ")
     buying_audiences = {}
     for sh in all_sh:
@@ -125,13 +133,18 @@ if uploaded_file:
         for sh in all_results['СХ'].unique():
             st.markdown(f"##### СХ: {sh}")
             sh_df = all_results[all_results['СХ']==sh].copy()
-            st.dataframe(sh_df[['Канал','Ціна','TRP','Оптимальна частка (%)','Оптимальний бюджет']].set_index('Канал'))
+            st.dataframe(
+                sh_df[['Канал','Ціна','TRP','Оптимальна частка (%)','Оптимальний бюджет']]
+                .set_index('Канал')
+                .style.applymap(lambda v: highlight_cost(v, sh_df['Ціна']), subset=['Ціна'])
+            )
         
         st.subheader("📊 Графіки сплітів")
         for sh in all_results['СХ'].unique():
             sh_df = all_results[all_results['СХ']==sh]
             fig, ax = plt.subplots(figsize=(10,5))
-            ax.bar(sh_df['Канал'], sh_df['Оптимальна частка (%)'], color='skyblue')
+            colors = ['lightgreen' if c==sh_df['Ціна'].min() else 'salmon' if c==sh_df['Ціна'].max() else 'skyblue' for c in sh_df['Ціна']]
+            ax.bar(sh_df['Канал'], sh_df['Оптимальна частка (%)'], color=colors)
             ax.set_ylabel('Частка (%)')
             ax.set_title(f"СХ: {sh} — Оптимальна частка по каналах")
             ax.set_xticklabels(sh_df['Канал'], rotation=45, ha='right')
