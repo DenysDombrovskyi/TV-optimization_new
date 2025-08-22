@@ -16,20 +16,21 @@ def validate_excel_file(df_standard):
 
 def heuristic_split(group_df):
     """
-    Евристичний розподіл:
+    Евристичний розподіл (жорстке правило: всі канали в спліті):
     - Всі канали залишаються.
-    - Мінімальна доля для кожного каналу розраховується через відхилення.
-    - Неефективні канали отримують мінімум.
-    - Решта слотів розподіляється пропорційно TRP.
+    - Мінімальна кількість слотів визначена через мінімальне відхилення.
+    - Неефективні канали залишаються на мінімумі.
+    - Решта слотів розподіляється пропорційно TRP для ефективних каналів.
     """
     min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int).to_numpy()
     max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int).to_numpy()
     std_slots = group_df['Стандартні слоти'].to_numpy(dtype=int)
     
-    slots = min_slots.copy()  # Початково всі мінімальні слоти
+    # Всі канали отримують мінімальні слоти
+    slots = min_slots.copy()
     trp_values = group_df['TRP'].to_numpy()
     
-    # Визначаємо ефективні канали (верхні 75% по TRP)
+    # Ефективні канали (верхні 75% по TRP)
     threshold = np.percentile(trp_values, 25)
     eff_idx = np.where(trp_values > threshold)[0]
     
@@ -38,7 +39,7 @@ def heuristic_split(group_df):
     allocated = slots.sum()
     remaining = total_std - allocated
     
-    # Розподіляємо залишок пропорційно TRP для ефективних каналів
+    # Розподіляємо залишок тільки між ефективними каналами
     if remaining > 0 and len(eff_idx) > 0:
         eff_trp = trp_values[eff_idx]
         for _ in range(remaining):
