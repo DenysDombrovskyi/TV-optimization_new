@@ -5,14 +5,6 @@ import io
 import matplotlib.pyplot as plt
 
 # --- Функції ---
-def validate_excel_file(df_standard):
-    required_cols_standard = ['Канал', 'СХ']
-    for col in required_cols_standard:
-        if col not in df_standard.columns:
-            st.error(f"❌ В аркуші 'Сп-во' відсутній обов'язковий стовпчик '{col}'.")
-            return False
-    return True
-
 def apply_budget_limits(df, min_share, max_share):
     df = df.copy()
     for idx, row in df.iterrows():
@@ -47,10 +39,21 @@ if uploaded_file:
         df_main = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
         df_affinity = pd.read_excel(uploaded_file, sheet_name="Affinity", engine="openpyxl")
         
-        if not validate_excel_file(df_main):
+        # Гнучка перевірка назв колонок
+        channel_cols = ['Канал', 'Channel', 'Канали']
+        sx_cols = ['СХ', 'SH', 'СХА']
+
+        channel_col = next((c for c in channel_cols if c in df_main.columns), None)
+        sx_col = next((c for c in sx_cols if c in df_main.columns), None)
+
+        if not channel_col or not sx_col:
+            st.error("❌ В Excel-файлі відсутні необхідні колонки для 'Канал' або 'СХ'.")
             st.stop()
+
+        df_main.rename(columns={channel_col: 'Канал', sx_col: 'СХ'}, inplace=True)
+
         st.success("✅ Дані успішно завантажено!")
-        
+
         # З'єднуємо по Каналу
         df = df_main.merge(df_affinity, on='Канал', how='left')
         df['Affinity'].fillna(1.0, inplace=True)  # якщо немає Affinity, ставимо 1.0
