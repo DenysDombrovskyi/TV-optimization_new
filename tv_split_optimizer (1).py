@@ -36,7 +36,13 @@ if uploaded_file:
         buying_audiences = {}
         for sh in all_sh:
             ba = st.selectbox(f"СХ: {sh}", all_ba, key=sh)
-            buying_audiences[sh] = ba
+            buying_audiences[sh] = ba if ba else all_ba[0]
+
+        # Перевірка, чи всі СХ мають обрану БА
+        missing_ba = [sh for sh in all_sh if buying_audiences.get(sh) is None]
+        if missing_ba:
+            st.error(f"❌ Не обрано БА для наступних СХ: {', '.join(missing_ba)}")
+            st.stop()
 
         if st.button("🚀 Запустити оптимізацію"):
             all_data['Ціна'] = all_data.apply(lambda row: row[f'Ціна_{buying_audiences[row["СХ"]]}'], axis=1)
@@ -122,3 +128,4 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"❌ Помилка при обробці файлу: {e}")
+
