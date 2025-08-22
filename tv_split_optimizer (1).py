@@ -62,11 +62,11 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
                 # Завдання для linprog: максимізувати загальний TRP
                 c = -group_df[goal].values
                 # Обмеження TRP для кожного каналу
-                A_ub = pd.get_dummies(group_df['Канал']).mul(group_df['TRP'], axis=0).values
-                b_upper = group_df['Верхня межа TRP'].values * group_df['TRP'].sum() # Normalize by sum
-                b_lower = group_df['Нижня межа TRP'].values * group_df['TRP'].sum()
+                A_upper = pd.get_dummies(group_df['Канал']).mul(group_df['TRP'], axis=0).values
+                b_upper = group_df['Верхня межа TRP'].values * group_standard_trp
+                b_lower = group_df['Нижня межа TRP'].values * group_standard_trp
                 
-                A_lower = -A_ub
+                A_lower = -A_upper
                 b_lower = -b_lower
                 
                 A = list(A_upper) + list(A_lower)
@@ -94,11 +94,11 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
 
             # Завдання для linprog
             c = -df[goal].values
-            A_ub = pd.get_dummies(df['Канал']).mul(df['TRP'], axis=0).values
-            b_upper = df['Верхня межа TRP'].values * df['TRP'].sum()
-            b_lower = df['Нижня межа TRP'].values * df['TRP'].sum()
+            A_upper = pd.get_dummies(df['Канал']).mul(df['TRP'], axis=0).values
+            b_upper = df['Верхня межа TRP'].values * total_standard_trp
+            b_lower = df['Нижня межа TRP'].values * total_standard_trp
             
-            A_lower = -A_ub
+            A_lower = -A_upper
             b_lower = -b_lower
 
             A = list(A_upper) + list(A_lower)
