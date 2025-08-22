@@ -35,18 +35,20 @@ def heuristic_split(group_df):
         if diff > 0:
             # додаємо 1 слот каналу з найвищою ефективністю і можливістю збільшення
             candidates = (slots < max_slots)
-            if not any(candidates):
+            candidate_idx = np.where(candidates)[0]
+            if len(candidate_idx) == 0:
                 break
-            idx = np.argmax(group_df['TRP'][candidates])
-            slots[candidates][idx] += 1
+            eff_idx = candidate_idx[np.argmax(group_df['TRP'].values[candidate_idx])]
+            slots[eff_idx] += 1
             diff -= 1
         else:
             # забираємо 1 слот каналу з найменшою ефективністю і можливістю зменшення
             candidates = (slots > min_slots)
-            if not any(candidates):
+            candidate_idx = np.where(candidates)[0]
+            if len(candidate_idx) == 0:
                 break
-            idx = np.argmin(group_df['TRP'][candidates])
-            slots[candidates][idx] -= 1
+            eff_idx = candidate_idx[np.argmin(group_df['TRP'].values[candidate_idx])]
+            slots[eff_idx] -= 1
             diff += 1
     return slots
 
