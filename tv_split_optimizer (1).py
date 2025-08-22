@@ -11,7 +11,7 @@ def validate_excel_file(df_standard):
     Перевіряє, чи існують необхідні стовпці в завантажених датафреймах.
     Повертає True, якщо валідація успішна, інакше - False.
     """
-    required_cols_standard = ['Канал', 'СХ', 'TRP_4+']
+    required_cols_standard = ['Канал', 'СХ']
 
     for col in required_cols_standard:
         if col not in df_standard.columns:
@@ -29,7 +29,11 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     
-    # Використовуємо TRP як мету для оптимізації
+    # НОВА ФОРМУЛА ДЛЯ AFFINITY ПО КАНАЛАХ
+    total_trp_for_aff = df['TRP'].sum()
+    df['Aff'] = (df['TRP'] / total_trp_for_aff) * 100 if total_trp_for_aff > 0 else 0
+    
+    df['Стандартний Aff'] = df['Aff']
     df['Стандартний TRP'] = df['TRP']
     df['Стандартні слоти'] = 1  
     
@@ -106,6 +110,7 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
                 slots = result.x.round(0).astype(int)
                 df['Оптимальні слоти'] = slots
                 df['Оптимальний TRP'] = slots * df['TRP']
+                df['Оптимальний Aff'] = slots * df['Aff']
                 all_results = df
             else:
                 st.error(f"❌ Загальна оптимізація не вдалася: {result.message}")
@@ -143,15 +148,15 @@ if uploaded_file:
     else:
         all_sh = all_data['СХ'].unique()
         all_ba = [col.replace('Ціна_', '') for col in all_data.columns if 'Ціна_' in col]
-        all_ba.append('4+')
-
+        
+        # Додаємо TRP_4+ для розрахунку афініті
+        if 'TRP_4+' not in all_data.columns:
+            st.error("❌ Для коректного розрахунку афініті в файлі повинен бути стовпчик 'TRP_4+'.")
+            st.stop()
+        
         st.header("🔧 Налаштування оптимізації")
         st.info(f"Для порівняння фінансових показників програма використовує умовний бюджет **{total_budget_assumption:,} грн**.")
-        
-        # Мета оптимізації тепер фіксована на TRP
-        goal = 'TRP'
-        st.info("Мета оптимізації зафіксована на **TRP**, оскільки афініті використовується для розрахунку звітності.")
-        
+        goal = st.selectbox("Мета оптимізації", ['Aff', 'TRP'])
         mode = st.selectbox("Режим оптимізації", ['total', 'per_sh'])
         
         st.subheader("🎯 Вибір БА для кожного СХ")
@@ -177,8 +182,6 @@ if uploaded_file:
         edited_deviation_df = st.data_editor(deviation_df, num_rows="dynamic")
         
         if st.button("🚀 Запустити оптимізацію"):
-            # Завантажуємо TRP_4+ для розрахунку афініті
-            all_data['TRP_4+'] = all_data.get('TRP_4+', 0)
             
             all_results = run_optimization(all_data.copy(), goal, mode, buying_audiences, edited_deviation_df)
             
@@ -196,19 +199,25 @@ if uploaded_file:
                     scale_factor = total_budget_assumption / total_budget_opt_raw
                     all_results['Оптимальні слоти (масштаб)'] = (all_results['Оптимальні слоти'] * scale_factor).round(0).astype(int)
                     all_results['Оптимальний TRP (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['TRP']
+                    all_results['Оптимальний Aff (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['Aff']
                     all_results['Оптимальний бюджет (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['Ціна']
                     
                     total_trp_opt_scaled = all_results['Оптимальний TRP (масштаб)'].sum()
+                    total_aff_opt_scaled = all_results['Оптимальний Aff (масштаб)'].sum()
                     
+                    # Розрахунок Ціни за Aff (оптимізований)
+                    cpt_opt = total_budget_assumption / total_aff_opt_scaled if total_aff_opt_scaled > 0 else 0
                 else:
                     st.error("Не вдалося розрахувати масштабовані дані. Загальний оптимальний бюджет дорівнює 0.")
                     st.stop()
                 
                 # Розрахунок вартості за рейтинг для загального спліта
                 total_trp_std = all_results['Стандартний TRP'].sum()
+                total_aff_std = all_results['Стандартний Aff'].sum()
                 
                 cpp_opt = total_budget_assumption / total_trp_opt_scaled if total_trp_opt_scaled > 0 else 0
                 cpp_std = total_budget_std / total_trp_std if total_trp_std > 0 else 0
+                cpt_std = total_budget_std / total_aff_std if total_aff_std > 0 else 0
                 
                 st.subheader("📊 Результати оптимізації")
 
@@ -219,16 +228,18 @@ if uploaded_file:
                     col1, col2 = st.columns(2)
                     with col1:
                         st.info("**Стандартний спліт**")
+                        st.metric("Ціна за Aff", f"{cpt_std:,.2f} грн")
                         st.metric("Ціна за TRP", f"{cpp_std:,.2f} грн")
                     with col2:
                         st.success("**Оптимізований спліт**")
+                        st.metric("Ціна за Aff", f"{cpt_opt:,.2f} грн")
                         st.metric("Ціна за TRP", f"{cpp_opt:,.2f} грн")
 
                     st.markdown("---")
                     st.markdown("#### Деталі спліта по каналах")
                     display_df_channels = all_results[['Канал', 'СХ', 
                                                        'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 
-                                                       'Оптимальні слоти (масштаб)', 'Оптимальний TRP (масштаб)']].copy()
+                                                       'Оптимальні слоти (масштаб)', 'Оптимальний TRP (масштаб)', 'Оптимальний Aff (масштаб)']].copy()
                     st.dataframe(display_df_channels.set_index('Канал'))
                 
                 with tab2:
@@ -236,44 +247,29 @@ if uploaded_file:
                     
                     sh_results_opt = all_results.groupby('СХ').agg(
                         {'Оптимальний бюджет (масштаб)': 'sum',
-                         'Оптимальний TRP (масштаб)': 'sum'}
+                         'Оптимальний TRP (масштаб)': 'sum',
+                         'Оптимальний Aff (масштаб)': 'sum'}
                     )
                     sh_results_std = all_results.groupby('СХ').agg(
                         {'Стандартний бюджет': 'sum',
-                         'Стандартний TRP': 'sum'}
+                         'Стандартний TRP': 'sum',
+                         'Стандартний Aff': 'sum'}
                     )
                     
+                    sh_results_opt['Ціна за Aff'] = sh_results_opt['Оптимальний бюджет (масштаб)'] / sh_results_opt['Оптимальний Aff (масштаб)']
                     sh_results_opt['Ціна за TRP'] = sh_results_opt['Оптимальний бюджет (масштаб)'] / sh_results_opt['Оптимальний TRP (масштаб)']
+                    sh_results_std['Ціна за Aff'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний Aff']
                     sh_results_std['Ціна за TRP'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний TRP']
 
                     display_df_sh_costs = pd.DataFrame({
                         'СХ': sh_results_opt.index,
+                        'Ціна за Aff (стандарт)': sh_results_std['Ціна за Aff'],
                         'Ціна за TRP (стандарт)': sh_results_std['Ціна за TRP'],
+                        'Ціна за Aff (оптимізований)': sh_results_opt['Ціна за Aff'],
                         'Ціна за TRP (оптимізований)': sh_results_opt['Ціна за TRP']
                     })
                     st.dataframe(display_df_sh_costs.set_index('СХ').fillna(0).applymap(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else x))
-
-                    # НОВИЙ РОЗРАХУНОК АФІНІТІ ПО СХ ДЛЯ ЗВІТУ
-                    st.markdown("---")
-                    st.markdown("#### Розрахунок Афініті по СХ")
-                    
-                    sh_affinities = pd.DataFrame(index=sh_results_opt.index)
-                    
-                    for sh in sh_affinities.index:
-                        # Сума TRP 4+ для каналів СХ
-                        total_trp_4plus_sh = all_results[all_results['СХ'] == sh]['TRP_4+'].sum()
-                        
-                        # Сума TRP БА для каналів СХ
-                        total_trp_ba_std_sh = all_results[all_results['СХ'] == sh]['Стандартний TRP'].sum()
-                        total_trp_ba_opt_sh = all_results[all_results['СХ'] == sh]['Оптимальний TRP (масштаб)'].sum()
-                        
-                        # Розрахунок афініті
-                        sh_affinities.loc[sh, 'Aff (стандарт)'] = (total_trp_ba_std_sh / total_trp_4plus_sh) * 100 if total_trp_4plus_sh > 0 else 0
-                        sh_affinities.loc[sh, 'Aff (оптимізований)'] = (total_trp_ba_opt_sh / total_trp_4plus_sh) * 100 if total_trp_4plus_sh > 0 else 0
-                    
-                    st.dataframe(sh_affinities.fillna(0).applymap(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else x))
-
-
+                
                 with tab3:
                     st.markdown("#### Порівняння сплітів за часткою бюджету, загальним TRP та кількістю слотів")
                     
@@ -332,15 +328,17 @@ if uploaded_file:
                     
                     # 1. Спліт (Стандартний та Оптимізований)
                     excel_df = all_results[['Канал', 'СХ', 
-                                            'Стандартні слоти', 'Стандартний TRP', 'Стандартний бюджет',
-                                            'Оптимальні слоти', 'Оптимальний TRP', 'Оптимальний бюджет']].copy()
+                                            'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 'Стандартний бюджет',
+                                            'Оптимальні слоти', 'Оптимальний TRP', 'Оптимальний Aff', 'Оптимальний бюджет']].copy()
                     
                     total_row = pd.DataFrame([['Загалом', '-', 
                                             excel_df['Стандартні слоти'].sum(), 
                                             excel_df['Стандартний TRP'].sum(), 
+                                            excel_df['Стандартний Aff'].sum(), 
                                             excel_df['Стандартний бюджет'].sum(),
                                             excel_df['Оптимальні слоти'].sum(), 
                                             excel_df['Оптимальний TRP'].sum(), 
+                                            excel_df['Оптимальний Aff'].sum(), 
                                             excel_df['Оптимальний бюджет'].sum()]],
                                             columns=excel_df.columns)
                     excel_df = pd.concat([excel_df, total_row], ignore_index=True)
@@ -350,6 +348,11 @@ if uploaded_file:
                     display_df_sh_costs.set_index('СХ').to_excel(writer, sheet_name='Вартість по СХ')
 
                     # 3. Aff по СХ
-                    sh_affinities.to_excel(writer, sheet_name='Aff по СХ')
+                    display_df_sh_aff = pd.DataFrame({
+                        'СХ': sh_results_opt.index,
+                        'Aff (стандарт)': sh_results_std['Стандартний Aff'],
+                        'Aff (оптимізований)': sh_results_opt['Оптимальний Aff (масштаб)']
+                    })
+                    display_df_sh_aff.set_index('СХ').to_excel(writer, sheet_name='Aff по СХ')
 
                 st.download_button("📥 Завантажити результати Excel", data=output.getvalue(), file_name="результати_оптимізації.xlsx")
