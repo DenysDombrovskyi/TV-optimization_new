@@ -35,9 +35,6 @@ def run_optimization(df, total_budget, goal, mode, buying_audiences, deviation_d
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     
-    # Видаляємо рядок, який фільтрував канали з нульовими значеннями, щоб обробляти всі канали
-    #df = df[(df['Ціна'] > 0) & (df['TRP'] > 0)].copy()
-
     # Об'єднуємо дані з таблиці відхилень
     df = df.merge(deviation_df, on='Канал', how='left').fillna(0)
     
@@ -155,10 +152,20 @@ if uploaded_file:
             buying_audiences[sh] = ba
         
         st.subheader("📊 Налаштування відхилень по каналах")
-        # Створюємо датафрейм для введення відхилень
+        
+        # Список каналів з відхиленням 20%
+        channels_20_percent = ['Новий канал', 'ICTV2', 'СТБ', '1+1 Україна', 'TET', '2+2', 'НТН']
+
+        # Створюємо датафрейм для введення відхилень з дефолтними значеннями
         deviation_df = all_data[['Канал']].copy()
-        deviation_df['Мінімальне відхилення'] = 0.0  # За замовчуванням 0%
-        deviation_df['Максимальне відхилення'] = 100.0 # За замовчуванням 100%
+        
+        def set_default_deviation(channel):
+            if channel in channels_20_percent:
+                return 20.0
+            return 30.0
+
+        deviation_df['Мінімальне відхилення'] = deviation_df['Канал'].apply(set_default_deviation)
+        deviation_df['Максимальне відхилення'] = deviation_df['Канал'].apply(set_default_deviation)
         
         # Виводимо редаговану таблицю в Streamlit
         edited_deviation_df = st.data_editor(deviation_df, num_rows="dynamic")
