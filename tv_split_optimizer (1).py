@@ -13,15 +13,19 @@ uploaded_file = st.file_uploader("Завантажте Excel-файл з дан�
 if uploaded_file:
     try:
         standard_df = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=1, engine="openpyxl")
-        aff_df = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", skiprows=7, engine="openpyxl")
-        aff_df = aff_df.iloc[:, [1, 5]].copy()
-        aff_df.columns = ['Канал', 'Aff']
+        aff_df_raw = pd.read_excel(uploaded_file, sheet_name="Оптимізація спліта (викл)", skiprows=7, engine="openpyxl")
+
+        required_columns = ['Канал', 'Aff']
+        if all(col in aff_df_raw.columns for col in required_columns):
+            aff_df = aff_df_raw[required_columns].copy()
+            st.success("✅ Дані успішно завантажено!")
+        else:
+            st.error(f"❌ Не знайдено необхідні колонки: {required_columns}. Знайдено: {list(aff_df_raw.columns)}")
+            st.stop()
 
         all_data = pd.merge(standard_df, aff_df, on='Канал')
         all_sh = all_data['СХ'].unique()
         all_ba = [col.replace('Ціна_', '') for col in all_data.columns if 'Ціна_' in col]
-
-        st.success("✅ Дані успішно завантажено!")
 
         st.header("🔧 Налаштування оптимізації")
         total_budget = st.number_input("Загальний бюджет (грн)", min_value=1000, value=500000, step=1000)
