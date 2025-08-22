@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import io
 from scipy.optimize import linprog
 import matplotlib.pyplot as plt
-import io
-import numpy as np
 
 # --- Функції для валідації та оптимізації ---
 
@@ -15,7 +15,12 @@ def validate_excel_file(df_standard):
             return False
     return True
 
-def run_optimization(df, goal, mode, buying_audiences, deviation_df):
+def hybrid_optimization(df, goal, buying_audiences, deviation_df, use_linprog_threshold=20):
+    """
+    Гібридна оптимізація спліта:
+    - Для груп з менше use_linprog_threshold каналів використовуємо linprog.
+    - Для великих груп — евристичний розподіл слотів пропорційно ефективності.
+    """
     df['Ціна'] = df.apply(lambda row: row.get(f'Ціна_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     df['TRP'] = df.apply(lambda row: row.get(f'TRP_{buying_audiences.get(row["СХ"], "")}', 0), axis=1)
     
@@ -30,82 +35,47 @@ def run_optimization(df, goal, mode, buying_audiences, deviation_df):
     
     all_results = pd.DataFrame()
     
-    if mode == 'per_sh':
-        with st.spinner('Проводимо оптимізацію за кожним СХ...'):
-            for sales_house, group_df in df.groupby('СХ'):
-                group_standard_trp = group_df['Стандартний TRP'].sum()
-                if group_standard_trp == 0:
-                    st.warning(f"Недостатньо даних для СХ {sales_house}. Пропускаємо...")
-                    continue
-                
-                c = group_df['Ціна'].values
-                
-                # Обмеження по відхиленнях для кожного каналу
-                A_channel_ub = np.diag(group_df['TRP'].values)
-                b_channel_ub = (1 + group_df['Максимальне відхилення'] / 100) * group_df['Стандартний TRP']
-                
-                A_channel_lb = -np.diag(group_df['TRP'].values)
-                b_channel_lb = -(1 - group_df['Мінімальне відхилення'] / 100) * group_df['Стандартний TRP']
-                
-                # Обмеження на загальний рейтинг
-                A_goal = -group_df[goal].values.reshape(1, -1)
-                b_goal = -np.array([group_df[f'Стандартний {goal}'].sum()])
-
-                A = np.vstack((A_channel_ub, A_channel_lb, A_goal))
-                b = np.concatenate((b_channel_ub, b_channel_lb, b_goal))
-                
-                bounds = [(1, None) for _ in range(len(group_df))]
-
-                result = linprog(c, A_ub=A, b_ub=b, bounds=bounds, method='highs')
-                
-                if result.success:
-                    slots = result.x.round(0).astype(int)
-                    group_df['Оптимальні слоти'] = slots
-                    group_df['Оптимальний TRP'] = slots * group_df['TRP']
-                    group_df['Оптимальний Aff'] = slots * group_df['Aff']
-                    all_results = pd.concat([all_results, group_df])
-                else:
-                    st.warning(f"⚠️ Оптимізація для СХ {sales_house} не змогла знайти ідеальне рішення. Використаємо стандартний спліт.")
-                    group_df['Оптимальні слоти'] = group_df['Стандартні слоти']
-                    group_df['Оптимальний TRP'] = group_df['Стандартний TRP']
-                    group_df['Оптимальний Aff'] = group_df['Стандартний Aff']
-                    all_results = pd.concat([all_results, group_df])
-                    
-    else:  # mode == 'total'
-        with st.spinner('Проводимо загальну оптимізацію...'):
-            c = df['Ціна'].values
-
-            A_channel_ub = np.diag(df['TRP'].values)
-            b_channel_ub = (1 + df['Максимальне відхилення'] / 100) * df['Стандартний TRP']
-            
-            A_channel_lb = -np.diag(df['TRP'].values)
-            b_channel_lb = -(1 - df['Мінімальне відхилення'] / 100) * df['Стандартний TRP']
-
-            A_goal = -df[goal].values.reshape(1, -1)
-            b_goal = -np.array([df[f'Стандартний {goal}'].sum()])
-
-            A = np.vstack((A_channel_ub, A_channel_lb, A_goal))
-            b = np.concatenate((b_channel_ub, b_channel_lb, b_goal))
-            
-            bounds = [(1, None) for _ in range(len(df))]
+    for sh, group_df in df.groupby('СХ'):
+        n_channels = len(group_df)
+        
+        # Вираховуємо мін/макс слоти для відхилень
+        min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int)
+        max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int)
+        
+        if n_channels <= use_linprog_threshold:
+            # --- Linprog оптимізація ---
+            c = group_df['Ціна'].values
+            A_ub = np.diag(group_df['TRP'].values)
+            b_ub = max_slots * group_df['TRP']
+            A_lb = -np.diag(group_df['TRP'].values)
+            b_lb = -min_slots * group_df['TRP']
+            A = np.vstack((A_ub, A_lb, -group_df[goal].values.reshape(1,-1)))
+            b = np.concatenate((b_ub, b_lb, [-group_df[f'Стандартний {goal}'].sum()]))
+            bounds = [(1, None) for _ in range(n_channels)]
             result = linprog(c, A_ub=A, b_ub=b, bounds=bounds, method='highs')
             
             if result.success:
                 slots = result.x.round(0).astype(int)
-                df['Оптимальні слоти'] = slots
-                df['Оптимальний TRP'] = slots * df['TRP']
-                df['Оптимальний Aff'] = slots * df['Aff']
-                all_results = df
             else:
-                st.warning("⚠️ Загальна оптимізація не змогла знайти ідеальне рішення. Використаємо стандартний спліт.")
-                df['Оптимальні слоти'] = df['Стандартні слоти']
-                df['Оптимальний TRP'] = df['Стандартний TRP']
-                df['Оптимальний Aff'] = df['Стандартний Aff']
-                all_results = df
+                # Якщо linprog не працює — евристика
+                slots = np.clip(np.round(group_df['TRP']/group_df['TRP'].sum()*n_channels), min_slots, max_slots)
+        else:
+            # --- Евристика ---
+            total_slots = n_channels  # початково кількість слотів = кількість каналів
+            slots = np.round(group_df['TRP']/group_df['TRP'].sum()*total_slots).astype(int)
+            slots = np.clip(slots, min_slots, max_slots)
+        
+        group_df['Оптимальні слоти'] = slots
+        group_df['Оптимальний TRP'] = slots * group_df['TRP']
+        group_df['Оптимальний Aff'] = slots * group_df['Aff']
+        all_results = pd.concat([all_results, group_df])
+    
+    all_results['Оптимальний бюджет'] = all_results['Оптимальні слоти'] * all_results['Ціна']
+    all_results['Стандартний бюджет'] = all_results['Стандартні слоти'] * all_results['Ціна']
     
     return all_results
 
-# --- Основна частина програми Streamlit ---
+# --- Streamlit інтерфейс ---
 
 st.set_page_config(page_title="Оптимізація ТВ спліта", layout="wide")
 st.title("📺 Оптимізація ТВ спліта | Dentsu X")
@@ -114,118 +84,52 @@ uploaded_file = st.file_uploader("Завантажте Excel-файл з дан�
 
 if uploaded_file:
     try:
-        with st.spinner('Завантаження та обробка даних...'):
-            standard_df = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
-            
-            if not validate_excel_file(standard_df):
-                st.stop()
-            
-            st.success("✅ Дані успішно завантажено!")
-            all_data = standard_df.copy()
-            
+        df = pd.read_excel(uploaded_file, sheet_name="Сп-во", skiprows=2, engine="openpyxl")
+        if not validate_excel_file(df):
+            st.stop()
+        st.success("✅ Дані успішно завантажено!")
     except Exception as e:
-        st.error(f"❌ Сталася неочікувана помилка: {e}")
-    else:
-        all_sh = all_data['СХ'].unique()
-        all_ba = [col.replace('Ціна_', '') for col in all_data.columns if 'Ціна_' in col]
+        st.error(f"❌ Помилка при завантаженні файлу: {e}")
+        st.stop()
+    
+    all_sh = df['СХ'].unique()
+    all_ba = [col.replace('Ціна_', '') for col in df.columns if 'Ціна_' in col]
+    
+    st.header("🔧 Налаштування оптимізації")
+    goal = st.selectbox("Мета оптимізації", ['Aff', 'TRP'])
+    
+    st.subheader("🎯 Вибір БА для кожного СХ")
+    buying_audiences = {}
+    for sh in all_sh:
+        ba = st.selectbox(f"СХ: {sh}", all_ba, key=sh)
+        buying_audiences[sh] = ba
+    
+    st.subheader("📊 Налаштування відхилень по каналах")
+    channels_20_percent = ['Новий канал', 'ICTV2', 'СТБ', '1+1 Україна', 'TET', '2+2', 'НТН']
+    deviation_df = df[['Канал']].copy()
+    deviation_df['Мінімальне відхилення'] = deviation_df['Канал'].apply(lambda x: 20.0 if x in channels_20_percent else 30.0)
+    deviation_df['Максимальне відхилення'] = deviation_df['Канал'].apply(lambda x: 20.0 if x in channels_20_percent else 30.0)
+    edited_deviation_df = st.data_editor(deviation_df, num_rows="dynamic")
+    
+    if st.button("🚀 Запустити оптимізацію"):
+        all_results = hybrid_optimization(df.copy(), goal, buying_audiences, edited_deviation_df)
         
-        st.header("🔧 Налаштування оптимізації")
-        goal = st.selectbox("Мета оптимізації", ['Aff', 'TRP'])
-        mode = st.selectbox("Режим оптимізації", ['total', 'per_sh'])
+        st.subheader("📊 Результати оптимізації по СХ")
+        for sh in all_results['СХ'].unique():
+            st.markdown(f"##### СХ: {sh}")
+            sh_df = all_results[all_results['СХ']==sh].copy()
+            sh_df['Стандартна частка TRP'] = (sh_df['Стандартний TRP']/sh_df['Стандартний TRP'].sum())*100
+            sh_df['Оптимальна частка TRP'] = (sh_df['Оптимальний TRP']/sh_df['Оптимальний TRP'].sum())*100
+            sh_df['Стандартна частка бюджету'] = (sh_df['Стандартний бюджет']/sh_df['Стандартний бюджет'].sum())*100
+            sh_df['Оптимальна частка бюджету'] = (sh_df['Оптимальний бюджет']/sh_df['Оптимальний бюджет'].sum())*100
+            st.dataframe(sh_df[['Канал','Стандартні слоти','Стандартний TRP','Стандартний Aff',
+                                'Оптимальні слоти','Оптимальний TRP','Оптимальний Aff',
+                                'Стандартна частка TRP','Оптимальна частка TRP',
+                                'Стандартна частка бюджету','Оптимальна частка бюджету']].set_index('Канал'))
         
-        st.subheader("🎯 Вибір БА для кожного СХ")
-        buying_audiences = {}
-        for sh in all_sh:
-            ba = st.selectbox(f"СХ: {sh}", all_ba, key=sh)
-            buying_audiences[sh] = ba
-        
-        st.subheader("📊 Налаштування відхилень по каналах")
-        channels_20_percent = ['Новий канал', 'ICTV2', 'СТБ', '1+1 Україна', 'TET', '2+2', 'НТН']
-        deviation_df = all_data[['Канал']].copy()
-        
-        def set_default_deviation(channel):
-            return 20.0 if channel in channels_20_percent else 30.0
-
-        deviation_df['Мінімальне відхилення'] = deviation_df['Канал'].apply(set_default_deviation)
-        deviation_df['Максимальне відхилення'] = deviation_df['Канал'].apply(set_default_deviation)
-        edited_deviation_df = st.data_editor(deviation_df, num_rows="dynamic")
-        
-        if st.button("🚀 Запустити оптимізацію"):
-            all_results = run_optimization(all_data.copy(), goal, mode, buying_audiences, edited_deviation_df)
-            
-            if not all_results.empty:
-                all_results['Оптимальний бюджет'] = all_results['Оптимальні слоти'] * all_results['Ціна']
-                all_results['Стандартний бюджет'] = all_results['Стандартні слоти'] * all_results['Ціна']
-
-                # --- Загальні показники ---
-                total_budget_opt = all_results['Оптимальний бюджет'].sum()
-                total_budget_std = all_results['Стандартний бюджет'].sum()
-                
-                total_trp_opt = all_results['Оптимальний TRP'].sum()
-                total_aff_opt = all_results['Оптимальний Aff'].sum()
-                
-                total_trp_std = all_results['Стандартний TRP'].sum()
-                total_aff_std = all_results['Стандартний Aff'].sum()
-                
-                cpp_opt = total_budget_opt / total_trp_opt if total_trp_opt > 0 else 0
-                cpp_std = total_budget_std / total_trp_std if total_trp_std > 0 else 0
-                cpt_opt = total_budget_opt / total_aff_opt if total_aff_opt > 0 else 0
-                cpt_std = total_budget_std / total_aff_std if total_aff_std > 0 else 0
-                
-                if total_budget_opt == total_budget_std:
-                    st.info("ℹ️ Оптимізація не знайшла можливості зменшити вартість.")
-                else:
-                    st.success(f"✅ Оптимізація завершена! Економія бюджету: {(total_budget_std - total_budget_opt):,.2f} грн")
-                
-                st.subheader("📊 Результати оптимізації")
-                tab1, tab2, tab3, tab4 = st.tabs(["Загальні показники", "Деталі по СХ", "Графіки", "Спліт по СХ"])
-
-                # --- Загальні показники ---
-                with tab1:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.info("**Стандартний спліт**")
-                        st.metric("Ціна за Aff", f"{cpt_std:,.2f} грн")
-                        st.metric("Ціна за TRP", f"{cpp_std:,.2f} грн")
-                        st.metric("Загальний бюджет", f"{total_budget_std:,.2f} грн")
-                    with col2:
-                        st.success("**Оптимізований спліт**")
-                        st.metric("Ціна за Aff", f"{cpt_opt:,.2f} грн")
-                        st.metric("Ціна за TRP", f"{cpp_opt:,.2f} грн")
-                        st.metric("Загальний бюджет", f"{total_budget_opt:,.2f} грн")
-
-                # --- Графіки ---
-                with tab3:
-                    if not all_results.empty:
-                        labels = all_results['Канал'].tolist()
-                        x = range(len(labels))
-                        width = 0.35
-                        
-                        fig_budget_share, ax_budget_share = plt.subplots(figsize=(12,6))
-                        std_share = (all_results['Стандартний бюджет'] / all_results['Стандартний бюджет'].sum()) * 100
-                        opt_share = (all_results['Оптимальний бюджет'] / all_results['Оптимальний бюджет'].sum()) * 100
-                        ax_budget_share.bar(x, std_share, width, label='Стандартний спліт', color='gray')
-                        ax_budget_share.bar([p + width for p in x], opt_share, width, label='Оптимізований спліт', color='skyblue')
-                        ax_budget_share.set_title('Розподіл частки бюджету (%)')
-                        ax_budget_share.set_ylabel('Частка (%)')
-                        ax_budget_share.set_xticks([p + width/2 for p in x])
-                        ax_budget_share.set_xticklabels(labels, rotation=45, ha="right")
-                        ax_budget_share.legend()
-                        ax_budget_share.grid(axis='y')
-                        plt.tight_layout()
-                        st.pyplot(fig_budget_share)
-
-                # --- Спліт по СХ ---
-                with tab4:
-                    st.markdown("#### Оптимальний спліт по кожному СХ")
-                    for sh in all_results['СХ'].unique():
-                        st.markdown(f"##### СХ: {sh}")
-                        sh_df = all_results[all_results['СХ']==sh].copy()
-                        sh_df['Стандартна частка TRP'] = (sh_df['Стандартний TRP'] / sh_df['Стандартний TRP'].sum())*100
-                        sh_df['Оптимальна частка TRP'] = (sh_df['Оптимальний TRP'] / sh_df['Оптимальний TRP'].sum())*100
-                        sh_df['Стандартна частка бюджету'] = (sh_df['Стандартний бюджет'] / sh_df['Стандартний бюджет'].sum())*100
-                        sh_df['Оптимальна частка бюджету'] = (sh_df['Оптимальний бюджет'] / sh_df['Оптимальний бюджет'].sum())*100
-                        st.dataframe(sh_df[['Канал','Стандартні слоти','Стандартний TRP','Стандартний Aff',
-                                            'Оптимальні слоти','Оптимальний TRP','Оптимальний Aff',
-                                            'Стандартна частка TRP','Оптимальна частка TRP',
-                                            'Стандартна частка бюджету','Оптимальна частка бюджету']].set_index('Канал'))
+        # --- Кнопка для експорту в Excel ---
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            all_results.to_excel(writer, sheet_name='Оптимальний спліт', index=False)
+        st.download_button("📥 Завантажити результати Excel", data=output.getvalue(),
+                           file_name="результати_оптимізації.xlsx")
