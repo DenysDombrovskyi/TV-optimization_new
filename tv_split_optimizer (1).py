@@ -3,6 +3,7 @@ import pandas as pd
 from scipy.optimize import linprog
 import matplotlib.pyplot as plt
 import io
+import plotly.express as px
 
 # --- Функції для валідації та оптимізації ---
 
@@ -197,93 +198,115 @@ if uploaded_file:
                     scale_factor = total_budget_assumption / total_budget_opt_raw
                     all_results['Оптимальні слоти (масштаб)'] = (all_results['Оптимальні слоти'] * scale_factor).round(0).astype(int)
                     all_results['Оптимальний TRP (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['TRP']
-                    all_results['Оптимальний Aff (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['Aff']
                     all_results['Оптимальний бюджет (масштаб)'] = all_results['Оптимальні слоти (масштаб)'] * all_results['Ціна']
                     
                     total_trp_opt_scaled = all_results['Оптимальний TRP (масштаб)'].sum()
+                    
+                    # Розрахунок Ціни за Aff (оптимізований)
+                    total_aff_opt_unscaled = all_results['Оптимальний Aff'].sum()
+                    cpt_opt = total_budget_assumption / total_aff_opt_unscaled if total_aff_opt_unscaled > 0 else 0
                 else:
                     st.error("Не вдалося розрахувати масштабовані дані. Загальний оптимальний бюджет дорівнює 0.")
                     st.stop()
                 
                 # Розрахунок вартості за рейтинг для загального спліта
                 total_trp_std = all_results['Стандартний TRP'].sum()
+                total_aff_std = all_results['Стандартний Aff'].sum()
                 
                 cpp_opt = total_budget_assumption / total_trp_opt_scaled if total_trp_opt_scaled > 0 else 0
                 cpp_std = total_budget_std / total_trp_std if total_trp_std > 0 else 0
-
+                cpt_std = total_budget_std / total_aff_std if total_aff_std > 0 else 0
+                
                 st.subheader("📊 Результати оптимізації")
-                
-                st.markdown("#### Загальна вартість за рейтинг (на основі умовного бюджету)")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.info("**Стандартний спліт**")
-                    st.metric("Ціна за TRP", f"{cpp_std:,.2f} грн")
-                with col2:
-                    st.success("**Оптимізований спліт**")
-                    st.metric("Ціна за TRP", f"{cpp_opt:,.2f} грн")
-                
-                st.markdown("---")
-                st.subheader("Розподіл вартості по СХ")
-                
-                sh_results_opt = all_results.groupby('СХ').agg(
-                    {'Оптимальний бюджет (масштаб)': 'sum',
-                     'Оптимальний TRP (масштаб)': 'sum'}
-                )
-                sh_results_std = all_results.groupby('СХ').agg(
-                    {'Стандартний бюджет': 'sum',
-                     'Стандартний TRP': 'sum'}
-                )
-                
-                sh_results_opt['Ціна за TRP'] = sh_results_opt['Оптимальний бюджет (масштаб)'] / sh_results_opt['Оптимальний TRP (масштаб)']
-                sh_results_std['Ціна за TRP'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний TRP']
 
-                display_df_sh = pd.DataFrame({
-                    'СХ': sh_results_opt.index,
-                    'Ціна за TRP (стандарт)': sh_results_std['Ціна за TRP'],
-                    'Ціна за TRP (оптимізований)': sh_results_opt['Ціна за TRP']
-                })
-                st.dataframe(display_df_sh.set_index('СХ').fillna(0).applymap(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else x))
+                tab1, tab2, tab3 = st.tabs(["Загальні показники", "Деталі по СХ", "Графіки"])
 
-                st.markdown("---")
-                st.subheader("Деталі спліта по каналах")
+                with tab1:
+                    st.markdown("#### Загальна вартість за рейтинг (на основі умовного бюджету)")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.info("**Стандартний спліт**")
+                        st.metric("Ціна за Aff", f"{cpt_std:,.2f} грн")
+                        st.metric("Ціна за TRP", f"{cpp_std:,.2f} грн")
+                    with col2:
+                        st.success("**Оптимізований спліт**")
+                        st.metric("Ціна за Aff", f"{cpt_opt:,.2f} грн")
+                        st.metric("Ціна за TRP", f"{cpp_opt:,.2f} грн")
+
+                    st.markdown("---")
+                    st.markdown("#### Деталі спліта по каналах")
+                    display_df_channels = all_results[['Канал', 'СХ', 
+                                                       'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 
+                                                       'Оптимальні слоти (масштаб)', 'Оптимальний TRP (масштаб)', 'Оптимальний Aff']].copy()
+                    st.dataframe(display_df_channels.set_index('Канал'))
                 
-                display_df_channels = all_results[['Канал', 'СХ', 
-                                                    'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 
-                                                    'Оптимальні слоти (масштаб)', 'Оптимальний TRP (масштаб)', 'Оптимальний Aff (масштаб)']].copy()
-                
-                st.dataframe(display_df_channels.set_index('Канал'))
-                
-                # Візуалізація результатів
-                fig, axes = plt.subplots(1, 2, figsize=(18, 8))
-                labels = all_results['Канал']
-                
-                if 'Стандартний TRP' in all_results.columns:
+                with tab2:
+                    st.markdown("#### Розподіл вартості по СХ")
+                    
+                    sh_results_opt = all_results.groupby('СХ').agg(
+                        {'Оптимальний бюджет (масштаб)': 'sum',
+                         'Оптимальний TRP (масштаб)': 'sum',
+                         'Оптимальний Aff': 'sum'}
+                    )
+                    sh_results_std = all_results.groupby('СХ').agg(
+                        {'Стандартний бюджет': 'sum',
+                         'Стандартний TRP': 'sum',
+                         'Стандартний Aff': 'sum'}
+                    )
+                    
+                    sh_results_opt['Ціна за Aff'] = sh_results_opt['Оптимальний бюджет (масштаб)'] / sh_results_opt['Оптимальний Aff']
+                    sh_results_opt['Ціна за TRP'] = sh_results_opt['Оптимальний бюджет (масштаб)'] / sh_results_opt['Оптимальний TRP (масштаб)']
+                    sh_results_std['Ціна за Aff'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний Aff']
+                    sh_results_std['Ціна за TRP'] = sh_results_std['Стандартний бюджет'] / sh_results_std['Стандартний TRP']
+
+                    display_df_sh = pd.DataFrame({
+                        'СХ': sh_results_opt.index,
+                        'Ціна за Aff (стандарт)': sh_results_std['Ціна за Aff'],
+                        'Ціна за TRP (стандарт)': sh_results_std['Ціна за TRP'],
+                        'Ціна за Aff (оптимізований)': sh_results_opt['Ціна за Aff'],
+                        'Ціна за TRP (оптимізований)': sh_results_opt['Ціна за TRP']
+                    })
+                    st.dataframe(display_df_sh.set_index('СХ').fillna(0).applymap(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else x))
+
+                with tab3:
+                    st.markdown("#### Порівняння сплітів за часткою TRP та кількістю слотів")
+                    
+                    # Перетворення даних для графіків
                     std_share = (all_results['Стандартний TRP'] / all_results['Стандартний TRP'].sum()) * 100
                     opt_share = (all_results['Оптимальний TRP (масштаб)'] / all_results['Оптимальний TRP (масштаб)'].sum()) * 100
-                    x = range(len(labels))
-                    width = 0.35
-                    axes[0].bar(x, std_share, width, label='Стандартний спліт', color='gray')
-                    axes[0].bar([p + width for p in x], opt_share, width, label='Оптимізований спліт', color='skyblue')
-                    axes[0].set_title('Частка TRP (%)')
-                    axes[0].set_xticks([p + width / 2 for p in x])
-                    axes[0].set_xticklabels(labels, rotation=45, ha="right")
-                    axes[0].legend()
-                    axes[0].grid(axis='y')
 
-                axes[1].bar(labels, all_results['Оптимальні слоти (масштаб)'], color='skyblue')
-                axes[1].set_title('Кількість слотів')
-                axes[1].set_xticklabels(labels, rotation=45, ha="right")
-                axes[1].grid(axis='y')
-                
-                plt.tight_layout()
-                st.pyplot(fig)
+                    # Створення DataFrame для Plotly
+                    plot_df = pd.DataFrame({
+                        'Канал': all_results['Канал'],
+                        'Частка TRP (%)': std_share,
+                        'Спліт': 'Стандартний'
+                    })
+                    plot_df = pd.concat([plot_df, pd.DataFrame({
+                        'Канал': all_results['Канал'],
+                        'Частка TRP (%)': opt_share,
+                        'Спліт': 'Оптимізований'
+                    })])
+                    
+                    # Графік частки TRP
+                    fig_trp = px.bar(plot_df, x="Канал", y="Частка TRP (%)", color="Спліт", barmode="group",
+                                     title="Розподіл частки TRP",
+                                     color_discrete_map={'Стандартний': 'gray', 'Оптимізований': 'skyblue'})
+                    st.plotly_chart(fig_trp, use_container_width=True)
+
+                    # Графік кількості слотів
+                    fig_slots = px.bar(all_results, x='Канал', y='Оптимальні слоти (масштаб)',
+                                       title='Кількість слотів в оптимізованому спліті',
+                                       color='СХ',
+                                       color_discrete_sequence=px.colors.qualitative.Pastel)
+                    st.plotly_chart(fig_slots, use_container_width=True)
 
                 # Кнопка для завантаження результатів
+                st.markdown("---")
                 output = io.BytesIO()
                 # Підготовка даних для експорту в Excel
                 excel_df = all_results[['Канал', 'СХ', 
                                         'Стандартні слоти', 'Стандартний TRP', 'Стандартний Aff', 'Стандартний бюджет',
-                                        'Оптимальні слоти (масштаб)', 'Оптимальний TRP (масштаб)', 'Оптимальний Aff (масштаб)', 'Оптимальний бюджет (масштаб)']].copy()
+                                        'Оптимальні слоти (масштаб)', 'Оптимальний TRP (масштаб)', 'Оптимальний Aff', 'Оптимальний бюджет (масштаб)']].copy()
 
                 # Додаємо загальні показники внизу таблиці
                 total_row = pd.DataFrame([['Загалом', '-', 
@@ -293,7 +316,7 @@ if uploaded_file:
                                           excel_df['Стандартний бюджет'].sum(),
                                           excel_df['Оптимальні слоти (масштаб)'].sum(), 
                                           excel_df['Оптимальний TRP (масштаб)'].sum(), 
-                                          excel_df['Оптимальний Aff (масштаб)'].sum(), 
+                                          excel_df['Оптимальний Aff'].sum(), 
                                           excel_df['Оптимальний бюджет (масштаб)'].sum()]],
                                           columns=excel_df.columns)
                 excel_df = pd.concat([excel_df, total_row], ignore_index=True)
