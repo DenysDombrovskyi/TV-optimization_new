@@ -18,31 +18,31 @@ def heuristic_split(group_df):
     """
     Евристичний розподіл слотів для всіх каналів з дотриманням мін/макс відхилень.
     """
-    min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int)
-    max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int)
+    min_slots = np.floor(group_df['Стандартні слоти'] * (1 - group_df['Мінімальне відхилення']/100)).astype(int).to_numpy()
+    max_slots = np.ceil(group_df['Стандартні слоти'] * (1 + group_df['Максимальне відхилення']/100)).astype(int).to_numpy()
     
     total_slots = group_df['Стандартні слоти'].sum()
     slots = np.round(group_df['TRP'] / group_df['TRP'].sum() * total_slots).astype(int)
-    slots = np.array(slots)
+    slots = np.array(slots)  # NumPy масив для змін
     
     slots = np.clip(slots, min_slots, max_slots)
     
     diff = total_slots - slots.sum()
+    trp_values = group_df['TRP'].to_numpy()
+    
     while diff != 0:
         if diff > 0:
-            candidates = (slots < max_slots)
-            candidate_idx = np.where(candidates)[0]
-            if len(candidate_idx) == 0:
+            candidates = np.where(slots < max_slots)[0]
+            if len(candidates) == 0:
                 break
-            eff_idx = candidate_idx[np.argmax(group_df['TRP'].values[candidate_idx])]
+            eff_idx = candidates[np.argmax(trp_values[candidates])]
             slots[eff_idx] += 1
             diff -= 1
         else:
-            candidates = (slots > min_slots)
-            candidate_idx = np.where(candidates)[0]
-            if len(candidate_idx) == 0:
+            candidates = np.where(slots > min_slots)[0]
+            if len(candidates) == 0:
                 break
-            eff_idx = candidate_idx[np.argmin(group_df['TRP'].values[candidate_idx])]
+            eff_idx = candidates[np.argmin(trp_values[candidates])]
             slots[eff_idx] -= 1
             diff += 1
     
@@ -126,7 +126,6 @@ if uploaded_file:
                                 'Стандартна частка TRP','Оптимальна частка TRP',
                                 'Стандартна частка бюджету','Оптимальна частка бюджету']].set_index('Канал'))
         
-        # --- Графіки ---
         st.subheader("📊 Графіки сплітів")
         for sh in all_results['СХ'].unique():
             sh_df = all_results[all_results['СХ']==sh]
@@ -143,7 +142,7 @@ if uploaded_file:
             ax.grid(axis='y')
             st.pyplot(fig)
         
-        # --- Кнопка для експорту в Excel ---
+        # --- Експорт у Excel ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             all_results.to_excel(writer, sheet_name='Оптимальний спліт', index=False)
